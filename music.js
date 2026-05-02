@@ -207,7 +207,14 @@ function createFfmpegStream(directUrl) {
     '-f', 's16le',
     '-ar', '48000',
     'pipe:1',
-  ], { stdio: ['ignore', 'pipe', 'ignore'] });
+  ], { stdio: ['ignore', 'pipe', 'pipe'] });
+  proc.stderr.on('data', d => {
+    const msg = d.toString();
+    if (!msg.includes('size=') && !msg.includes('time=')) {
+      console.error('[ffmpeg]', msg.trim());
+    }
+  });
+  proc.on('error', err => console.error('[ffmpeg] spawn error:', err.message));
   return proc;
 }
 
