@@ -75,8 +75,18 @@ function getSafeNick(member) {
 }
 
 // ── Build channel permissions ─────────────────────────────────────────────────
-function buildPerms(guild, creatorId, extraRoleIds = []) {
-  const staffIds = [...cfg.allStaffRoleIds(), ...extraRoleIds].filter(Boolean);
+
+// Returns the minimum staff level required for a given category ID
+function categoryLevel(categoryId) {
+  if (categoryId && categoryId === cfg.ADMIN_TICKET_CATEGORY_ID)  return 4;
+  if (categoryId && categoryId === cfg.SENIOR_TICKET_CATEGORY_ID) return 3;
+  return 1;
+}
+
+function buildPerms(guild, creatorId, minimumLevel = 1) {
+  const staffIds = Object.values(cfg.ROLES)
+    .filter(r => r.level >= minimumLevel && r.id)
+    .map(r => r.id);
   return [
     { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
     {
@@ -111,19 +121,25 @@ function buildPerms(guild, creatorId, extraRoleIds = []) {
 
 async function createChannel(guild, name, categoryId, creatorId) {
   await guild.roles.fetch().catch(() => {});
+  const level = categoryLevel(categoryId);
   return guild.channels.create({
     name,
     type: ChannelType.GuildText,
     parent: categoryId || null,
-    permissionOverwrites: buildPerms(guild, creatorId),
+    permissionOverwrites: buildPerms(guild, creatorId, level),
     topic: `CreatorID: ${creatorId}`,
   });
 }
 
-function staffPing(guild) {
-  const dutyId = cfg.STAFF_DUTY_ROLE_ID;
-  if (dutyId && guild.roles.cache.has(dutyId)) return `<@&${dutyId}>`;
-  return cfg.allStaffRoleIds().filter(id => guild.roles.cache.has(id)).map(id => `<@&${id}>`).join(' ');
+function staffPing(guild, minimumLevel = 1) {
+  if (minimumLevel === 1) {
+    const dutyId = cfg.STAFF_DUTY_ROLE_ID;
+    if (dutyId && guild.roles.cache.has(dutyId)) return `<@&${dutyId}>`;
+  }
+  return Object.values(cfg.ROLES)
+    .filter(r => r.level >= minimumLevel && r.id && guild.roles.cache.has(r.id))
+    .map(r => `<@&${r.id}>`)
+    .join(' ');
 }
 
 function dupCheck(guild, creatorId, prefix) {
@@ -507,8 +523,9 @@ async function submitCC(interaction) {
   }
 
   await interaction.deferReply({ flags: 64 });
+  const ccCatId = cfg.ADMIN_TICKET_CATEGORY_ID || cfg.TICKET_CATEGORY_ID;
   const channel = await createChannel(
-    interaction.guild, `cc-${nick}`, cfg.ADMIN_TICKET_CATEGORY_ID || cfg.TICKET_CATEGORY_ID, interaction.user.id
+    interaction.guild, `cc-${nick}`, ccCatId, interaction.user.id
   ).catch(async e => { await interaction.editReply(`Failed: ${e.message}`); return null; });
   if (!channel) return;
 
@@ -526,7 +543,7 @@ async function submitCC(interaction) {
     new ButtonBuilder().setCustomId('ticket_close').setLabel('Close Ticket').setStyle(ButtonStyle.Danger)
   );
   saveTicketMeta(channel.id, { type: 'cc', creatorId: interaction.user.id, creatorTag: interaction.user.tag, openedAt: new Date().toISOString(), channelId: channel.id });
-  await channel.send({ content: `<@${interaction.user.id}> ${staffPing(interaction.guild)}`, embeds: [embed], components: [closeRow] });
+  await channel.send({ content: `<@${interaction.user.id}> ${staffPing(interaction.guild, categoryLevel(ccCatId))}`, embeds: [embed], components: [closeRow] });
   await interaction.editReply({ content: `Application submitted: <#${channel.id}>` });
 }
 
@@ -556,8 +573,9 @@ async function submitArt(interaction) {
   const nick        = getSafeNick(interaction.member);
 
   await interaction.deferReply({ flags: 64 });
+  const artCatId = cfg.ADMIN_TICKET_CATEGORY_ID || cfg.TICKET_CATEGORY_ID;
   const channel = await createChannel(
-    interaction.guild, `art-${nick}`, cfg.ADMIN_TICKET_CATEGORY_ID || cfg.TICKET_CATEGORY_ID, interaction.user.id
+    interaction.guild, `art-${nick}`, artCatId, interaction.user.id
   ).catch(async e => { await interaction.editReply(`Failed: ${e.message}`); return null; });
   if (!channel) return;
 
@@ -573,7 +591,7 @@ async function submitArt(interaction) {
     new ButtonBuilder().setCustomId('ticket_close').setLabel('Close Ticket').setStyle(ButtonStyle.Danger)
   );
   saveTicketMeta(channel.id, { type: 'art', creatorId: interaction.user.id, creatorTag: interaction.user.tag, openedAt: new Date().toISOString(), channelId: channel.id });
-  await channel.send({ content: `<@${interaction.user.id}> ${staffPing(interaction.guild)}`, embeds: [embed], components: [closeRow] });
+  await channel.send({ content: `<@${interaction.user.id}> ${staffPing(interaction.guild, categoryLevel(artCatId))}`, embeds: [embed], components: [closeRow] });
   await interaction.editReply({ content: `Request submitted: <#${channel.id}>` });
 }
 

@@ -45,8 +45,8 @@ module.exports = {
   // Ticket transcripts / general log
   LOG_CHANNEL_ID:             process.env.LOG_CHANNEL_ID,
   // Separate ticket logs per type
-  GR_LOG_CHANNEL_ID:          process.env.GR_LOG_CHANNEL_ID          || process.env.LOG_CHANNEL_ID,
-  DR_LOG_CHANNEL_ID:          process.env.DR_LOG_CHANNEL_ID          || process.env.LOG_CHANNEL_ID,
+  GR_LOG_CHANNEL_ID:          '1499484872144588842',
+  DR_LOG_CHANNEL_ID:          '1499678254884323469',
   APPEAL_LOG_CHANNEL_ID:      process.env.APPEAL_LOG_CHANNEL_ID      || process.env.LOG_CHANNEL_ID,
   CC_LOG_CHANNEL_ID:          '1499677788905672704',
   ART_LOG_CHANNEL_ID:         '1499754325558427760',
