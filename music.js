@@ -217,6 +217,7 @@ function getQueue(guildId) { return queues.get(guildId) || null; }
 function destroyQueue(guildId) {
   const q = queues.get(guildId);
   if (!q) return;
+  if (q.ytdlpProc) { try { q.ytdlpProc.kill('SIGKILL'); } catch {} }
   if (q.ffmpegProc) { try { q.ffmpegProc.kill('SIGKILL'); } catch {} }
   try { q.player.stop(true); } catch {}
   try { q.connection.destroy(); } catch {}
@@ -245,14 +246,35 @@ async function playNext(guildId) {
   q.current   = track;
 
   try {
-    // Get direct audio URL via yt-dlp
-    const directUrl = await getDirectUrl(track.url);
+    // Kill previous processes
+    if (q.ytdlpProc) { try { q.ytdlpProc.kill('SIGKILL'); } catch {} q.ytdlpProc = null; }
+    if (q.ffmpegProc) { try { q.ffmpegProc.kill('SIGKILL'); } catch {} q.ffmpegProc = null; }
 
-    // Kill any previous ffmpeg process
-    if (q.ffmpegProc) { try { q.ffmpegProc.kill('SIGKILL'); } catch {} }
+    // Pipe yt-dlp → ffmpeg → Discord (avoids CDN URL header issues)
+    const ytdlpProc = spawn(YTDLP_BIN, [...YTDLP_BASE, '-o', '-', track.url],
+      { stdio: ['ignore', 'pipe', 'pipe'] });
 
-    // Stream through ffmpeg
-    const ffmpegProc = createFfmpegStream(directUrl);
+    const ffmpegProc = spawn(ffmpegPath, [
+      '-i', 'pipe:0',
+      '-vn',
+      '-b:a', '128k',
+      '-ac', '2',
+      '-f', 's16le',
+      '-ar', '48000',
+      'pipe:1',
+    ], { stdio: ['pipe', 'pipe', 'pipe'] });
+
+    ytdlpProc.stdout.pipe(ffmpegProc.stdin);
+
+    ytdlpProc.stderr.on('data', d => { const m = d.toString().trim(); if (m) console.error('[yt-dlp]', m); });
+    ffmpegProc.stderr.on('data', d => {
+      const m = d.toString();
+      if (!m.includes('size=') && !m.includes('time=')) console.error('[ffmpeg]', m.trim());
+    });
+    ytdlpProc.on('error', err => console.error('[yt-dlp] spawn error:', err.message));
+    ffmpegProc.on('error', err => console.error('[ffmpeg] spawn error:', err.message));
+
+    q.ytdlpProc = ytdlpProc;
     q.ffmpegProc = ffmpegProc;
 
     const resource = createAudioResource(ffmpegProc.stdout, {
@@ -324,7 +346,7 @@ async function handlePlay(interaction) {
     interaction.guild.members.me.voice.setDeaf(true).catch(() => {});
 
     const player = createAudioPlayer();
-    q = { connection, player, tracks: [], current: null, textChannel: interaction.channel, ffmpegProc: null };
+    q = { connection, player, tracks: [], current: null, textChannel: interaction.channel, ytdlpProc: null, ffmpegProc: null };
     queues.set(interaction.guild.id, q);
     connection.subscribe(player);
 
@@ -370,6 +392,7 @@ async function handleSkip(interaction) {
   const q = getQueue(interaction.guild.id);
   if (!q?.current) return interaction.reply({ content: 'Nothing is playing.', flags: 64 });
   const title = q.current.title;
+  if (q.ytdlpProc) { try { q.ytdlpProc.kill('SIGKILL'); } catch {} q.ytdlpProc = null; }
   if (q.ffmpegProc) { try { q.ffmpegProc.kill('SIGKILL'); } catch {} q.ffmpegProc = null; }
   q.player.stop();
   return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x5865F2).setDescription(`Skipped **${title}**`)] });
