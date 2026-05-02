@@ -257,10 +257,11 @@ async function playNext(guildId) {
     const ffmpegProc = spawn(ffmpegPath, [
       '-i', 'pipe:0',
       '-vn',
+      '-c:a', 'libopus',
       '-b:a', '128k',
-      '-ac', '2',
-      '-f', 's16le',
       '-ar', '48000',
+      '-ac', '2',
+      '-f', 'ogg',
       'pipe:1',
     ], { stdio: ['pipe', 'pipe', 'pipe'] });
 
@@ -278,7 +279,7 @@ async function playNext(guildId) {
     q.ffmpegProc = ffmpegProc;
 
     const resource = createAudioResource(ffmpegProc.stdout, {
-      inputType: require('@discordjs/voice').StreamType.Raw,
+      inputType: require('@discordjs/voice').StreamType.OggOpus,
     });
 
     q.player.play(resource);
