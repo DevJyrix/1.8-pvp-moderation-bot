@@ -62,28 +62,18 @@ async function ensureYtdlp() {
   }
 }
 
-// ── yt-dlp options (mirrors the working Python bot) ───────────────────────────
-const YTDLP_ARGS = [
-  '--format', 'bestaudio/best',
+// ── yt-dlp options ─────────────────────────────────────────────────────────────
+// mweb client works on datacenter IPs; no skip=dash,hls so all formats are available
+const YTDLP_BASE = [
+  '--format', 'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio/best',
   '--no-playlist',
   '--no-check-certificate',
-  '--quiet',
-  '--no-warnings',
-  '--extractor-args', 'youtube:skip=dash,hls;player_client=android,web',
+  '--extractor-args', 'youtube:player_client=mweb',
   '--age-limit', '25',
-  '--get-url',     // just output the direct audio URL, we pipe it through ffmpeg
 ];
 
-const YTDLP_INFO_ARGS = [
-  '--format', 'bestaudio/best',
-  '--no-playlist',
-  '--no-check-certificate',
-  '--quiet',
-  '--no-warnings',
-  '--extractor-args', 'youtube:skip=dash,hls;player_client=android,web',
-  '--age-limit', '25',
-  '--dump-json',
-];
+const YTDLP_ARGS      = [...YTDLP_BASE, '--get-url'];
+const YTDLP_INFO_ARGS = [...YTDLP_BASE, '--dump-json'];
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -99,10 +89,15 @@ function fmtDuration(secs) {
 async function ytdlpJson(args) {
   return new Promise((resolve, reject) => {
     let out = '';
+    let err = '';
     const proc = spawn(YTDLP_BIN, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     proc.stdout.on('data', d => out += d.toString());
+    proc.stderr.on('data', d => err += d.toString());
     proc.on('close', code => {
-      if (code !== 0) return reject(new Error(`yt-dlp exited with code ${code}`));
+      if (code !== 0) {
+        const detail = err.trim() ? ': ' + err.trim().split('\n').slice(-3).join(' | ') : '';
+        return reject(new Error(`yt-dlp exited with code ${code}${detail}`));
+      }
       try { resolve(JSON.parse(out.trim())); }
       catch { reject(new Error('Failed to parse yt-dlp output')); }
     });
@@ -175,20 +170,16 @@ async function getDirectUrl(trackUrl) {
   await ensureYtdlp();
   return new Promise((resolve, reject) => {
     let out = '';
-    const proc = spawn(YTDLP_BIN, [
-      '--format', 'bestaudio/best',
-      '--no-playlist',
-      '--no-check-certificate',
-      '--quiet',
-      '--no-warnings',
-      '--extractor-args', 'youtube:skip=dash,hls;player_client=android,web',
-      '--get-url',
-      trackUrl,
-    ], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let err = '';
+    const proc = spawn(YTDLP_BIN, [...YTDLP_ARGS, trackUrl], { stdio: ['ignore', 'pipe', 'pipe'] });
     proc.stdout.on('data', d => out += d.toString());
+    proc.stderr.on('data', d => err += d.toString());
     proc.on('close', code => {
       const url = out.trim().split('\n')[0];
-      if (code !== 0 || !url) return reject(new Error('yt-dlp failed to get stream URL'));
+      if (code !== 0 || !url) {
+        const detail = err.trim() ? ': ' + err.trim().split('\n').slice(-3).join(' | ') : '';
+        return reject(new Error(`yt-dlp failed to get stream URL${detail}`));
+      }
       resolve(url);
     });
     proc.on('error', reject);
