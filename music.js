@@ -301,8 +301,8 @@ async function handlePlay(interaction) {
 
   // Ensure yt-dlp is available
   await ensureYtdlp();
-  if (!fs.existsSync(BIN_PATH)) {
-    return interaction.editReply('yt-dlp binary not found. Please download it manually from https://github.com/yt-dlp/yt-dlp/releases and place it at: `' + BIN_PATH + '`');
+  if (!YTDLP_BIN) {
+    return interaction.editReply('yt-dlp not found. Install it or place the binary at: `' + BIN_PATH + '`');
   }
 
   let track;
