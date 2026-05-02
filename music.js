@@ -29,22 +29,36 @@ const path = require('path');
 const fs   = require('fs');
 
 // ── yt-dlp binary setup ────────────────────────────────────────────────────────
+const { execFileSync } = require('child_process');
 const BIN_DIR  = path.join(__dirname, 'bin');
 fs.mkdirSync(BIN_DIR, { recursive: true });
 const BIN_PATH = path.join(BIN_DIR, process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
 
-const ytdlp = new YTDlpWrap(BIN_PATH);
+let YTDLP_BIN = null; // resolved on first use
 
-// Download yt-dlp binary on first run
 async function ensureYtdlp() {
-  if (fs.existsSync(BIN_PATH)) return;
+  if (YTDLP_BIN) return;
+
+  // Prefer system yt-dlp (Railway nixpacks installs it here)
+  try {
+    const cmd = process.platform === 'win32' ? 'where' : 'which';
+    const p = execFileSync(cmd, ['yt-dlp'], { encoding: 'utf8' }).trim().split('\n')[0];
+    if (p && fs.existsSync(p)) { YTDLP_BIN = p; return; }
+  } catch {}
+
+  // Use already-downloaded local binary
+  if (fs.existsSync(BIN_PATH)) { YTDLP_BIN = BIN_PATH; return; }
+
+  // Download binary as last resort
   console.log('[music] Downloading yt-dlp binary...');
   try {
     await YTDlpWrap.downloadFromGithub(BIN_PATH);
+    if (process.platform !== 'win32') fs.chmodSync(BIN_PATH, '755');
     console.log('[music] yt-dlp downloaded successfully');
+    YTDLP_BIN = BIN_PATH;
   } catch (e) {
     console.error('[music] Failed to download yt-dlp:', e.message);
-    console.error('[music] Manual fix: download yt-dlp from https://github.com/yt-dlp/yt-dlp/releases and place it at:', BIN_PATH);
+    console.error('[music] Place yt-dlp binary at:', BIN_PATH);
   }
 }
 
@@ -85,7 +99,7 @@ function fmtDuration(secs) {
 async function ytdlpJson(args) {
   return new Promise((resolve, reject) => {
     let out = '';
-    const proc = spawn(BIN_PATH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const proc = spawn(YTDLP_BIN, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     proc.stdout.on('data', d => out += d.toString());
     proc.on('close', code => {
       if (code !== 0) return reject(new Error(`yt-dlp exited with code ${code}`));
@@ -122,7 +136,7 @@ async function resolveTrack(query) {
 // This exactly mirrors how the Python bot handles it
 function createStream(trackUrl) {
   // yt-dlp fetches the audio stream URL
-  const ytdlpProc = spawn(BIN_PATH, [
+  const ytdlpProc = spawn(YTDLP_BIN, [
     ...YTDLP_ARGS,
     '--extractor-args', 'youtube:skip=dash,hls;player_client=android,web',
     trackUrl,
@@ -161,7 +175,7 @@ async function getDirectUrl(trackUrl) {
   await ensureYtdlp();
   return new Promise((resolve, reject) => {
     let out = '';
-    const proc = spawn(BIN_PATH, [
+    const proc = spawn(YTDLP_BIN, [
       '--format', 'bestaudio/best',
       '--no-playlist',
       '--no-check-certificate',
