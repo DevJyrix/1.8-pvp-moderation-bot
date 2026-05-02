@@ -1,12 +1,9 @@
 FROM node:20-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl \
+    ca-certificates curl python3 python3-pip \
+    && python3 -m pip install --break-system-packages yt-dlp \
     && rm -rf /var/lib/apt/lists/*
-
-# Install yt-dlp standalone binary (PyInstaller bundle, no Python needed)
-RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
-    -o /usr/local/bin/yt-dlp && chmod +x /usr/local/bin/yt-dlp
 
 WORKDIR /app
 COPY package*.json ./
