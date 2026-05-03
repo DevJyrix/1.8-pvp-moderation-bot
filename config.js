@@ -65,7 +65,7 @@ module.exports = {
   DS_STATS:                   process.env.DATASTORE_STATS    || 'PlayerStats',
   DS_BANS:                    process.env.DATASTORE_BANS     || 'PlayerBans',
   // ProfileStore
-  PROFILESTORE_NAME:          process.env.PROFILESTORE_NAME       || 'PlayerData',
+  PROFILESTORE_NAME:          process.env.PROFILESTORE_NAME       || 'PlayerStore',
   PROFILESTORE_KEY_PREFIX:    process.env.PROFILESTORE_KEY_PREFIX || 'Player_',
   // YouTube API (for CC applications)
   YOUTUBE_API_KEY:            process.env.YOUTUBE_API_KEY || null,
