@@ -579,6 +579,49 @@ client.on('messageCreate', async (msg) => {
     return;
   }
 
+  // ── .debugstats — Admin: raw DataStore diagnostic
+  if (cmd === '.debugstats') {
+    if (!config.isAdmin(member)) return;
+    if (!args[1]) return msg.reply('Usage: `.debugstats <RobloxUser>`');
+    const loading = await msg.reply('Running DataStore diagnostic...');
+    try {
+      const uniId  = process.env.ROBLOX_UNIVERSE_ID;
+      const hasKey = !!process.env.ROBLOX_API_KEY;
+      const dsName = config.PROFILESTORE_NAME;
+      const prefix = config.PROFILESTORE_KEY_PREFIX;
+
+      const lines = [
+        `**ROBLOX_UNIVERSE_ID:** \`${uniId || 'NOT SET'}\``,
+        `**ROBLOX_API_KEY:** ${hasKey ? '✅ set' : '❌ NOT SET'}`,
+        `**PROFILESTORE_NAME:** \`${dsName}\``,
+        `**PROFILESTORE_KEY_PREFIX:** \`${prefix}\``,
+      ];
+
+      const user = await resolveRoblox(args[1]);
+      if (!user) { lines.push(`❌ Roblox user not found: \`${args[1]}\``); return loading.edit(lines.join('\n')); }
+
+      const key = `${prefix}${user.id}`;
+      lines.push(`**Lookup key:** \`${key}\` in DataStore \`${dsName}\``);
+
+      // Try ProfileStore DataStore
+      let raw;
+      try {
+        raw = await roblox.dsGet(dsName, key);
+        if (raw === null) {
+          lines.push(`⚠️ DataStore returned **null** (key not found or DataStore doesn't exist)`);
+        } else {
+          const preview = JSON.stringify(raw).slice(0, 400);
+          lines.push(`✅ DataStore returned data:\n\`\`\`json\n${preview}\n\`\`\``);
+        }
+      } catch (e) {
+        lines.push(`❌ DataStore error: \`${e.response?.status || ''} ${e.message}\``);
+      }
+
+      await loading.edit(lines.join('\n'));
+    } catch (e) { loading.edit(`Error: ${e.message}`); }
+    return;
+  }
+
   // ── .clearbans <RobloxUser>  (Senior Staff+)
   if (cmd === '.clearbans') {
     if (!config.isSenior(member) && !config.isAdmin(member)) return;

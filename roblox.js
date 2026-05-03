@@ -195,5 +195,5 @@ function formatPlaytime(seconds) {
 module.exports = {
   getUserByName, getUserById, getAvatar,
   getPlayerStats, savePlayerStats, getBanData, saveBanData,
-  formatPlaytime, dsSet, publishMessage,
+  formatPlaytime, dsGet, dsSet, publishMessage,
 };
