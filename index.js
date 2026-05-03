@@ -347,8 +347,8 @@ client.on('messageCreate', async (msg) => {
     try {
       const user = await resolveRoblox(args[1]);
       if (!user) return loading.edit(`No Roblox user found for \`${args[1]}\``);
-      const { embed, active } = await buildStatsEmbed(user, msg.author);
-      await loading.edit({ content: '', embeds: [embed], components: statsRow(user.id, !!active, config.isAdmin(member)) });
+      const { embed, isBanned } = await buildStatsEmbed(user, msg.author);
+      await loading.edit({ content: '', embeds: [embed], components: statsRow(user.id, isBanned, config.isAdmin(member)) });
     } catch (e) { console.error('[checkstats]', e); loading.edit(`Error: ${e.message}`); }
     return;
   }
@@ -647,10 +647,10 @@ client.on('messageCreate', async (msg) => {
       if (!user) return loading.edit(`No Roblox user found for \`${args[1]}\``);
       const banData = await roblox.getBanData(user.id);
       const count   = (banData.history || []).length;
-      // Wipe history and active ban
       banData.history = [];
       banData.active  = null;
-      await roblox.saveBanData(user.id, banData);
+      await roblox.saveBanData(user.id, banData).catch(e => console.error('[clearbans] DS write:', e.message));
+      await roblox.unrestrictUser(user.id).catch(e => console.error('[clearbans] unrestrict:', e.message));
       await loading.edit({ content: '', embeds: [new EmbedBuilder().setColor(0xED4245).setTitle('Ban History Cleared')
         .setDescription(`All ban records for **[${user.name}](https://www.roblox.com/users/${user.id}/profile)** have been wiped.`)
         .addFields(
@@ -1170,10 +1170,11 @@ async function executeGameBan(robloxUser, ruleCode, staffUser, reason, replyMsg,
   // Platform-level ban via Open Cloud User Restrictions API
   let restrictError = null;
   try {
+    const ruleName = RULES[ruleCode]?.name || ruleCode;
     await roblox.restrictUser(userId, {
       days, permanent,
-      privateReason: `Rule ${ruleCode} — banned by ${staffUser.tag}. ${reason}`.slice(0, 1000),
-      displayReason: `Banned for Rule ${ruleCode}${permanent ? ' permanently' : ` for ${label}`}.`,
+      privateReason: `Rule ${ruleCode} — ${ruleName}. Banned by ${staffUser.tag}. ${reason}`.slice(0, 1000),
+      displayReason:  `Banned for Rule ${ruleCode} — ${ruleName}${permanent ? ' permanently' : ` for ${label}`}.`,
     });
   } catch (e) {
     restrictError = e;
@@ -1213,24 +1214,37 @@ async function executeGameBan(robloxUser, ruleCode, staffUser, reason, replyMsg,
 
 // ─── Game unban ────────────────────────────────────────────────────────────────
 async function executeGameUnban(robloxUser, staffUser, reason, replyMsg) {
-  const userId  = robloxUser.id;
-  const banData = await roblox.getBanData(userId);
-  if (!banData.active || !isActiveBan(banData.active)) {
+  const userId = robloxUser.id;
+
+  const [banData, restriction] = await Promise.all([
+    roblox.getBanData(userId).catch(() => ({ active: null, history: [] })),
+    roblox.getUserRestriction(userId).catch(() => null),
+  ]);
+
+  const platformActive = !!restriction?.gameJoinRestriction?.active;
+  const dsActive       = banData.active && isActiveBan(banData.active);
+
+  if (!platformActive && !dsActive) {
     return replyMsg?.edit(`No active game ban found for **${robloxUser.name}**.`);
   }
 
-  const history = banData.history || [];
-  const lastBan = [...history].reverse().find(b => b.bannedAt === banData.active.bannedAt);
-  if (lastBan) { lastBan.appealedBy = staffUser.tag; lastBan.appealedAt = new Date().toISOString(); }
+  // Update DataStore record if it has an active ban entry
+  if (dsActive) {
+    const history = banData.history || [];
+    const lastBan = [...history].reverse().find(b => b.bannedAt === banData.active.bannedAt);
+    if (lastBan) { lastBan.appealedBy = staffUser.tag; lastBan.appealedAt = new Date().toISOString(); }
+    banData.active  = null;
+    banData.history = history;
+    await roblox.saveBanData(userId, banData).catch(e => console.error('[ungban] DS write failed:', e.message));
+  }
 
-  banData.active  = null;
-  banData.history = history;
-
+  // Lift platform-level restriction
   try {
-    await roblox.saveBanData(userId, banData);
+    await roblox.unrestrictUser(userId);
   } catch (e) {
-    console.error('[ungban] DS write failed:', e.message);
-    if (replyMsg) await replyMsg.edit({ content: `DataStore write failed: ${e.message}`, embeds: [], components: [] });
+    const status = e.response?.status;
+    console.error('[ungban] User Restrictions API failed:', status, e.message);
+    if (replyMsg) await replyMsg.edit({ content: `Failed to lift platform ban (${status}): ${e.message}`, embeds: [], components: [] });
     return;
   }
 
@@ -1239,21 +1253,12 @@ async function executeGameUnban(robloxUser, staffUser, reason, replyMsg) {
       { name: 'Player', value: `[${robloxUser.name}](https://www.roblox.com/users/${userId}/profile)`, inline: true },
       { name: 'By',     value: staffUser.tag, inline: true },
       { name: 'Reason', value: reason, inline: false },
-      { name: 'Note',   value: 'Marked as appealed — will not count toward future escalation.', inline: false },
     ).setTimestamp();
 
   if (replyMsg) await replyMsg.edit({ content: '', embeds: [embed], components: [] });
   recordAction(staffUser.id, 'UNGBAN', robloxUser.name);
   await logAction(client, { action: 'UNGBAN', target: { username: robloxUser.name, robloxId: userId }, staff: { tag: staffUser.tag, id: staffUser.id }, reason });
 
-  // Lift platform-level restriction
-  try {
-    await roblox.unrestrictUser(userId);
-  } catch (e) {
-    console.error('[ungban] User Restrictions API failed:', e.response?.status, e.message);
-  }
-
-  // Notify live servers the ban was lifted
   await roblox.publishMessage('ModAction', { action: 'unban', userId: String(userId) });
 }
 
@@ -1581,8 +1586,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     try {
       const user = await roblox.getUserById(userId);
       await executeGameUnban(user, interaction.user, 'Unbanned via panel', null);
-      const { embed, active } = await buildStatsEmbed(user, interaction.user);
-      // Update the original stats message
+      const { embed } = await buildStatsEmbed(user, interaction.user);
+      // Update the original stats message — unban just completed so ban is lifted
       try { await interaction.message.edit({ embeds: [embed], components: statsRow(userId, false) }); } catch {}
       await interaction.editReply({ content: `Game ban removed for **${user.name}**.` });
     } catch (e) {
@@ -1617,8 +1622,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     await interaction.deferUpdate();
     try {
       const user = await roblox.getUserById(userId);
-      const { embed, active } = await buildStatsEmbed(user, interaction.user);
-      await interaction.editReply({ embeds: [embed], components: statsRow(userId, !!active) });
+      const { embed, isBanned } = await buildStatsEmbed(user, interaction.user);
+      await interaction.editReply({ embeds: [embed], components: statsRow(userId, isBanned) });
     } catch (e) { interaction.followUp({ content: `Error: ${e.message}`, flags: 64 }); }
     return;
   }
@@ -1734,9 +1739,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await executeGameKick(user, interaction.user, reason, null);
       // Refresh stats embed
       try {
-        const { embed, active } = await buildStatsEmbed(user, interaction.user);
+        const { embed, isBanned } = await buildStatsEmbed(user, interaction.user);
         const original = await interaction.message?.fetch().catch(() => null);
-        if (original) await original.edit({ embeds: [embed], components: statsRow(userId, !!active) });
+        if (original) await original.edit({ embeds: [embed], components: statsRow(userId, isBanned) });
       } catch {}
       await interaction.editReply({ content: `**${user.name}** has been game-kicked. Reason: ${reason}` });
     } catch (e) { await interaction.editReply({ content: `Error: ${e.message}` }); }
@@ -1788,9 +1793,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await logStatChange(client, user, interaction.user.tag, field, String(value), 'set');
       // Refresh the stats embed
       try {
-        const { embed, active } = await buildStatsEmbed(user, interaction.user);
+        const { embed, isBanned } = await buildStatsEmbed(user, interaction.user);
         const original = await interaction.message?.fetch().catch(() => null);
-        if (original) await original.edit({ embeds: [embed], components: statsRow(userId, !!active, true) });
+        if (original) await original.edit({ embeds: [embed], components: statsRow(userId, isBanned, true) });
       } catch {}
       await interaction.editReply({ content: `**${field}** updated to **${value}** for ${user.name}.` });
     } catch (e) { await interaction.editReply(`Error: ${e.message}`); }

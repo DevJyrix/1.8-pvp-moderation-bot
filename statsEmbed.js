@@ -1,5 +1,5 @@
 const { EmbedBuilder } = require('discord.js');
-const { getPlayerStats, getBanData, getAvatar, formatPlaytime } = require('./roblox');
+const { getPlayerStats, getBanData, getAvatar, getUserRestriction, formatPlaytime } = require('./roblox');
 const { isActiveBan } = require('./rules');
 
 function accountAge(createdStr) {
@@ -29,15 +29,18 @@ function val(v) {
 }
 
 async function buildStatsEmbed(robloxUser, requestedBy) {
-  const [stats, banData, avatarUrl] = await Promise.all([
+  const [stats, banData, avatarUrl, restriction] = await Promise.all([
     getPlayerStats(robloxUser.id).catch(() => null),
     getBanData(robloxUser.id).catch(() => ({ active: null, history: [] })),
     getAvatar(robloxUser.id).catch(() => null),
+    getUserRestriction(robloxUser.id).catch(() => null),
   ]);
 
+  const platformBan  = restriction?.gameJoinRestriction?.active ? restriction.gameJoinRestriction : null;
   const active       = banData?.active && isActiveBan(banData.active) ? banData.active : null;
   const validHistory = (banData?.history || []).filter(b => !b._hidden);
-  const color        = active ? 0xED4245 : validHistory.length > 0 ? 0xFEE75C : 0x57F287;
+  const isBanned     = !!(platformBan || active);
+  const color        = isBanned ? 0xED4245 : validHistory.length > 0 ? 0xFEE75C : 0x57F287;
 
   const isDiff    = robloxUser.displayName && robloxUser.displayName !== robloxUser.name;
   const titleText = isDiff ? `${robloxUser.displayName} (${robloxUser.name})` : robloxUser.name;
@@ -85,7 +88,17 @@ async function buildStatsEmbed(robloxUser, requestedBy) {
 
   // Moderation
   let banStatus;
-  if (active) {
+  if (platformBan) {
+    let expires = 'Permanent';
+    if (platformBan.duration) {
+      const durSecs = parseInt(platformBan.duration);
+      const startMs = platformBan.startTime ? new Date(platformBan.startTime).getTime() : Date.now();
+      const expTs   = Math.floor((startMs + durSecs * 1000) / 1000);
+      expires = `<t:${expTs}:R>`;
+    }
+    banStatus = `Banned (Platform) — Expires ${expires}`;
+    if (platformBan.displayReason) banStatus += `\nReason: ${platformBan.displayReason}`;
+  } else if (active) {
     const tsExp   = active.permanent ? null : Math.floor(new Date(active.expires).getTime() / 1000);
     const expires = active.permanent ? 'Permanent' : `<t:${tsExp}:R>`;
     banStatus = `Banned — Rule ${active.rule} — Expires ${expires}\nIssued by: ${active.bannedBy}`;
@@ -114,7 +127,7 @@ async function buildStatsEmbed(robloxUser, requestedBy) {
   }
   embed.setTimestamp();
 
-  return { embed, banData, active, robloxUser };
+  return { embed, banData, active, isBanned, robloxUser };
 }
 
 module.exports = { buildStatsEmbed };

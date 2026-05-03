@@ -51,22 +51,35 @@ async function dsGet(datastoreName, key) {
 
 async function dsSet(datastoreName, key, value) {
   if (!ROBLOX_API_KEY || !UNIVERSE_ID) { console.warn('[DS] No API key/Universe ID'); return null; }
+  const headers  = { 'x-api-key': ROBLOX_API_KEY, 'content-type': 'application/json' };
+  const base     = `https://apis.roblox.com/cloud/v2/universes/${UNIVERSE_ID}/data-stores/${encodeURIComponent(datastoreName)}/entries`;
+  const entryUrl = `${base}/${encodeURIComponent(key)}`;
+
+  // Try PATCH (update existing entry) first — needs universe-datastores.objects:update
   try {
-    const body = JSON.stringify(value);
-    const res  = await axios.post(
-      `https://apis.roblox.com/datastores/v1/universes/${UNIVERSE_ID}/standard-datastores/datastore/entries/entry`,
-      body,
-      { params: { datastoreName, entryKey: key }, headers: { 'x-api-key': ROBLOX_API_KEY, 'content-type': 'application/json' } }
-    );
-    console.log(`[DS] SET ${datastoreName}/${key} → ${res.status}`);
+    const res = await axios.patch(entryUrl, { value }, { headers, params: { updateMask: 'value' } });
+    console.log(`[DS] PATCH ${datastoreName}/${key} → ${res.status}`);
     return res.data;
-  } catch (e) {
-    const status = e.response?.status;
-    const detail = e.response?.data ?? e.message;
-    console.error(`[DS] SET ${datastoreName}/${key} → ${status}`, JSON.stringify(detail));
-    if (status === 403) throw new Error(`DataStore write blocked (403) for "${datastoreName}". Check API key permissions at create.roblox.com/credentials.`);
-    if (status === 404) throw new Error(`DataStore "${datastoreName}" not found (404). Run /setstats in the Studio emulator first to create it.`);
-    throw e;
+  } catch (patchErr) {
+    const s = patchErr.response?.status;
+    if (s !== 404 && s !== 400) {
+      console.error(`[DS] PATCH ${datastoreName}/${key} → ${s}`, patchErr.response?.data ?? patchErr.message);
+      if (s === 403) throw new Error(`DataStore write blocked (403) for "${datastoreName}". Check API key at create.roblox.com/credentials.`);
+      throw patchErr;
+    }
+    // 404 = entry doesn't exist yet, fall through to create
+  }
+
+  // POST to create new entry — needs universe-datastores.objects:create
+  try {
+    const res = await axios.post(base, { id: key, value }, { headers });
+    console.log(`[DS] CREATE ${datastoreName}/${key} → ${res.status}`);
+    return res.data;
+  } catch (postErr) {
+    const s = postErr.response?.status;
+    console.error(`[DS] POST ${datastoreName}/${key} → ${s}`, postErr.response?.data ?? postErr.message);
+    if (s === 403) throw new Error(`DataStore create blocked (403) for "${datastoreName}". Add universe-datastores.objects:create permission to your API key.`);
+    throw postErr;
   }
 }
 
@@ -140,13 +153,31 @@ function normaliseStats(d) {
 
 async function savePlayerStats(userId, stats) {
   const profileKey = `${PROFILESTORE_KEY_PREFIX}${userId}`;
-  // Try to read existing ProfileStore record so we preserve MetaData
   let existing = null;
   try { existing = await dsGet(PROFILESTORE_NAME, profileKey); } catch {}
 
   if (existing && existing.MetaData) {
-    // ProfileStore format — update only the Data field
-    existing.Data = stats;
+    // ProfileStore format — merge only changed fields back into original Data
+    // so Settings, Cosmetics, etc. are preserved
+    const data = (existing.Data && typeof existing.Data === 'object') ? existing.Data : {};
+    data.Stats = (typeof data.Stats === 'object' && data.Stats) ? data.Stats : {};
+
+    const set = (obj, key, val) => { if (val !== undefined && val !== null) obj[key] = val; };
+    set(data, 'Coins',         stats.coins);
+    set(data, 'Level',         stats.level);
+    const exp = stats.experience ?? stats.progress;
+    set(data, 'Experience',    exp);
+    set(data, 'MaxExperience', stats.maxProgress);
+    set(data, 'Wins',          stats.wins);
+    set(data, 'Rank',          stats.rank ?? stats.rankName);
+    set(data.Stats, 'LifetimeKills', stats.lifetimeKills);
+    set(data.Stats, 'BestStreak',    stats.highestKillstreak);
+    set(data.Stats, 'Killstreak',    stats.killstreak);
+    set(data.Stats, 'Losses',        stats.losses);
+    set(data.Stats, 'Playtime',      stats.playtime);
+    set(data.Stats, 'CPS',           stats.clicksPerSecond);
+
+    existing.Data = data;
     return dsSet(PROFILESTORE_NAME, profileKey, existing);
   }
   // Fallback: write as flat object to legacy DataStore
