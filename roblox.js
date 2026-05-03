@@ -51,35 +51,24 @@ async function dsGet(datastoreName, key) {
 
 async function dsSet(datastoreName, key, value) {
   if (!ROBLOX_API_KEY || !UNIVERSE_ID) { console.warn('[DS] No API key/Universe ID'); return null; }
-  const headers  = { 'x-api-key': ROBLOX_API_KEY, 'content-type': 'application/json' };
-  const base     = `https://apis.roblox.com/cloud/v2/universes/${UNIVERSE_ID}/data-stores/${encodeURIComponent(datastoreName)}/entries`;
-  const entryUrl = `${base}/${encodeURIComponent(key)}`;
-
-  // Try PATCH (update existing entry) first — needs universe-datastores.objects:update
+  // v1 DataStore POST — same format as the game's SetAsync, compatible with ProfileStore reads.
+  // Requires API key permission: universe-datastores:write
+  const url = `https://apis.roblox.com/datastores/v1/universes/${UNIVERSE_ID}/standard-datastores/datastore/entries/entry`;
   try {
-    const res = await axios.patch(entryUrl, { value }, { headers, params: { updateMask: 'value' } });
-    console.log(`[DS] PATCH ${datastoreName}/${key} → ${res.status}`);
+    const res = await axios.post(url, JSON.stringify(value), {
+      params:  { datastoreName, entryKey: key },
+      headers: { 'x-api-key': ROBLOX_API_KEY, 'content-type': 'application/json' },
+    });
+    console.log(`[DS] SET ${datastoreName}/${key} → ${res.status}`);
     return res.data;
-  } catch (patchErr) {
-    const s = patchErr.response?.status;
-    if (s !== 404 && s !== 400) {
-      console.error(`[DS] PATCH ${datastoreName}/${key} → ${s}`, patchErr.response?.data ?? patchErr.message);
-      if (s === 403) throw new Error(`DataStore write blocked (403) for "${datastoreName}". Check API key at create.roblox.com/credentials.`);
-      throw patchErr;
-    }
-    // 404 = entry doesn't exist yet, fall through to create
-  }
-
-  // POST to create new entry — needs universe-datastores.objects:create
-  try {
-    const res = await axios.post(base, { id: key, value }, { headers });
-    console.log(`[DS] CREATE ${datastoreName}/${key} → ${res.status}`);
-    return res.data;
-  } catch (postErr) {
-    const s = postErr.response?.status;
-    console.error(`[DS] POST ${datastoreName}/${key} → ${s}`, postErr.response?.data ?? postErr.message);
-    if (s === 403) throw new Error(`DataStore create blocked (403) for "${datastoreName}". Add universe-datastores.objects:create permission to your API key.`);
-    throw postErr;
+  } catch (e) {
+    const s = e.response?.status;
+    console.error(`[DS] SET ${datastoreName}/${key} → ${s}`, e.response?.data ?? e.message);
+    if (s === 403) throw new Error(
+      `DataStore write blocked (403) for "${datastoreName}". ` +
+      `Add "universe-datastores:write" permission to your API key at create.roblox.com/credentials.`
+    );
+    throw e;
   }
 }
 
