@@ -47,7 +47,7 @@ module.exports = {
   // Separate ticket logs per type
   GR_LOG_CHANNEL_ID:          '1499484872144588842',
   DR_LOG_CHANNEL_ID:          '1499678254884323469',
-  APPEAL_LOG_CHANNEL_ID:      process.env.APPEAL_LOG_CHANNEL_ID      || process.env.LOG_CHANNEL_ID,
+  APPEAL_LOG_CHANNEL_ID:      '1500529036466589696',
   CC_LOG_CHANNEL_ID:          '1499677788905672704',
   ART_LOG_CHANNEL_ID:         '1499754325558427760',
   // Game mod actions (gban, ungban, gkick)
@@ -57,8 +57,6 @@ module.exports = {
   // Fallback for anything else
   MOD_LOG_CHANNEL_ID:         process.env.MOD_LOG_CHANNEL_ID,
   STATS_LOG_CHANNEL_ID:       process.env.STATS_LOG_CHANNEL_ID || process.env.MOD_LOG_CHANNEL_ID,
-  CC_LOG_CHANNEL_ID:          '1499677788905672704',
-  ART_LOG_CHANNEL_ID:         '1499754325558427760',
   // Staff duty role — pinged on new tickets
   STAFF_DUTY_ROLE_ID:         process.env.STAFF_DUTY_ROLE_ID || null,
   // Roblox
@@ -69,6 +67,9 @@ module.exports = {
   // ProfileStore
   PROFILESTORE_NAME:          process.env.PROFILESTORE_NAME       || 'PlayerData',
   PROFILESTORE_KEY_PREFIX:    process.env.PROFILESTORE_KEY_PREFIX || 'Player_',
+  // YouTube API (for CC applications)
+  YOUTUBE_API_KEY:            process.env.YOUTUBE_API_KEY || null,
+  CC_VIDEO_MIN_VIEWS:         parseInt(process.env.CC_VIDEO_MIN_VIEWS || '10000'),
   // Anti-raid
   ANTI_RAID_MAX:    parseInt(process.env.ANTI_RAID_MAX_BANS_PER_MINUTE || '3'),
   ANTI_RAID_LOCKOUT: parseInt(process.env.ANTI_RAID_LOCKOUT_MINUTES    || '10'),

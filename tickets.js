@@ -35,6 +35,7 @@ function ticketLogChannel(type) {
 const { generateAndPostTranscript } = require('./transcript');
 const { recordAction } = require('./modstats');
 const roblox = require('./roblox');
+const yt     = require('./youtube');
 const { isActiveBan, RULES } = require('./rules');
 const fs   = require('fs');
 const path = require('path');
@@ -131,13 +132,13 @@ async function createChannel(guild, name, categoryId, creatorId) {
   });
 }
 
-function staffPing(guild, minimumLevel = 1) {
-  if (minimumLevel === 1) {
+function staffPing(guild, minimumLevel = 1, maxLevel = Infinity) {
+  if (minimumLevel === 1 && maxLevel >= 1) {
     const dutyId = cfg.STAFF_DUTY_ROLE_ID;
     if (dutyId && guild.roles.cache.has(dutyId)) return `<@&${dutyId}>`;
   }
   return Object.values(cfg.ROLES)
-    .filter(r => r.level >= minimumLevel && r.id && guild.roles.cache.has(r.id))
+    .filter(r => r.level >= minimumLevel && r.level <= maxLevel && r.id && guild.roles.cache.has(r.id))
     .map(r => `<@&${r.id}>`)
     .join(' ');
 }
@@ -470,26 +471,18 @@ async function handleCC(interaction) {
   const dup = dupCheck(interaction.guild, interaction.user.id, 'cc-');
   if (dup) return interaction.reply({ content: `You already have an open CC application: <#${dup.id}>`, flags: 64 });
 
-  const ytMin = cfg.CC_YT_MIN_SUBS?.toLocaleString?.() || '1,000';
-  const ttMin = cfg.CC_TT_MIN_SUBS?.toLocaleString?.() || '5,000';
-
+  const minViews = (cfg.CC_VIDEO_MIN_VIEWS || 10000).toLocaleString();
   const modal = new ModalBuilder().setCustomId('modal_cc').setTitle('Content Creator Application');
   modal.addComponents(
     new ActionRowBuilder().addComponents(
-      new TextInputBuilder().setCustomId('platform').setLabel('Platform (YouTube or TikTok)')
-        .setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(20)
-        .setPlaceholder('YouTube or TikTok')
-    ),
-    new ActionRowBuilder().addComponents(
-      new TextInputBuilder().setCustomId('channel_link').setLabel('Channel / Profile Link')
+      new TextInputBuilder().setCustomId('channel_link').setLabel('Your YouTube Channel Link')
         .setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(300)
-        .setPlaceholder('https://youtube.com/... or https://tiktok.com/...')
+        .setPlaceholder('https://youtube.com/@YourChannel')
     ),
     new ActionRowBuilder().addComponents(
-      new TextInputBuilder().setCustomId('subscribers')
-        .setLabel(`Subscriber Count (YT: ${ytMin}+ / TT: ${ttMin}+)`)
-        .setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(20)
-        .setPlaceholder('e.g. 2500')
+      new TextInputBuilder().setCustomId('video_link').setLabel(`Video About The Game (${minViews}+ views required)`)
+        .setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(300)
+        .setPlaceholder('https://youtube.com/watch?v=...')
     ),
     new ActionRowBuilder().addComponents(
       new TextInputBuilder().setCustomId('about').setLabel('Tell us about your content')
@@ -500,29 +493,41 @@ async function handleCC(interaction) {
 }
 
 async function submitCC(interaction) {
-  const platform   = interaction.fields.getTextInputValue('platform').trim();
-  const link       = interaction.fields.getTextInputValue('channel_link').trim();
-  const subStr     = interaction.fields.getTextInputValue('subscribers').trim();
-  const about      = interaction.fields.getTextInputValue('about').trim();
-  const nick       = getSafeNick(interaction.member);
+  const channelLink = interaction.fields.getTextInputValue('channel_link').trim();
+  const videoLink   = interaction.fields.getTextInputValue('video_link').trim();
+  const about       = interaction.fields.getTextInputValue('about').trim();
+  const nick        = getSafeNick(interaction.member);
 
-  const subs = parseInt(subStr.replace(/[^0-9]/g, ''));
-  const isYT = /youtube|yt/i.test(platform);
-  const isTT = /tiktok|tt/i.test(platform);
-
-  if (!isYT && !isTT) {
-    return interaction.reply({ content: 'Platform must be **YouTube** or **TikTok**.', flags: 64 });
+  if (!/youtube\.com|youtu\.be/i.test(channelLink)) {
+    return interaction.reply({ content: 'Please provide a valid **YouTube channel** link.', flags: 64 });
   }
-
-  const required = isYT ? (cfg.CC_YT_MIN_SUBS || 1000) : (cfg.CC_TT_MIN_SUBS || 5000);
-  if (isNaN(subs) || subs < required) {
-    return interaction.reply({
-      content: `You need at least **${required.toLocaleString()} subscribers** on ${isYT ? 'YouTube' : 'TikTok'} to apply. You entered: ${subStr}`,
-      flags: 64,
-    });
+  const videoId = yt.extractVideoId(videoLink);
+  if (!videoId) {
+    return interaction.reply({ content: 'Please provide a valid **YouTube video** link.', flags: 64 });
   }
 
   await interaction.deferReply({ flags: 64 });
+
+  // Pre-check views if API key is configured
+  if (cfg.YOUTUBE_API_KEY) {
+    try {
+      const videoInfo = await yt.getVideoInfo(videoId);
+      if (!videoInfo) {
+        return interaction.editReply('Your video could not be found. Make sure the video is **public**.');
+      }
+      const minViews = cfg.CC_VIDEO_MIN_VIEWS || 10000;
+      if (videoInfo.views < minViews) {
+        return interaction.editReply(
+          `Your video needs at least **${minViews.toLocaleString()} views** to qualify.\n` +
+          `**[${videoInfo.title}](https://youtu.be/${videoId})** currently has **${videoInfo.views.toLocaleString()} views**.`
+        );
+      }
+    } catch (e) {
+      console.error('[CC] YouTube pre-check failed:', e.message);
+      // Don't block application if API fails — staff will verify manually
+    }
+  }
+
   const ccCatId = cfg.ADMIN_TICKET_CATEGORY_ID || cfg.TICKET_CATEGORY_ID;
   const channel = await createChannel(
     interaction.guild, `cc-${nick}`, ccCatId, interaction.user.id
@@ -531,11 +536,10 @@ async function submitCC(interaction) {
 
   const embed = new EmbedBuilder().setColor(0x5865F2).setTitle('Content Creator Application')
     .addFields(
-      { name: 'Applicant',    value: `<@${interaction.user.id}>`, inline: true },
-      { name: 'Platform',     value: isYT ? 'YouTube' : 'TikTok', inline: true },
-      { name: 'Subscribers',  value: subs.toLocaleString(),        inline: true },
-      { name: 'Channel Link', value: link,                          inline: false },
-      { name: 'About',        value: about,                         inline: false },
+      { name: 'Applicant',       value: `<@${interaction.user.id}>`, inline: true },
+      { name: 'Channel',         value: channelLink,                  inline: false },
+      { name: 'Submitted Video', value: videoLink,                    inline: false },
+      { name: 'About',           value: about,                        inline: false },
     )
     .setFooter({ text: 'Content Creator Program • 1.8 Arena' });
 
@@ -543,7 +547,9 @@ async function submitCC(interaction) {
     new ButtonBuilder().setCustomId('ticket_close').setLabel('Close Ticket').setStyle(ButtonStyle.Danger)
   );
   saveTicketMeta(channel.id, { type: 'cc', creatorId: interaction.user.id, creatorTag: interaction.user.tag, openedAt: new Date().toISOString(), channelId: channel.id });
-  await channel.send({ content: `<@${interaction.user.id}> ${staffPing(interaction.guild, categoryLevel(ccCatId))}`, embeds: [embed], components: [closeRow] });
+  // Ping senior staff only — do NOT ping admin in CC tickets
+  await channel.send({ content: `<@${interaction.user.id}> ${staffPing(interaction.guild, 3, 3)}`, embeds: [embed], components: [closeRow] });
+  await _ccLookup(channel, channelLink, videoLink);
   await interaction.editReply({ content: `Application submitted: <#${channel.id}>` });
 }
 
@@ -593,6 +599,67 @@ async function submitArt(interaction) {
   saveTicketMeta(channel.id, { type: 'art', creatorId: interaction.user.id, creatorTag: interaction.user.tag, openedAt: new Date().toISOString(), channelId: channel.id });
   await channel.send({ content: `<@${interaction.user.id}> ${staffPing(interaction.guild, categoryLevel(artCatId))}`, embeds: [embed], components: [closeRow] });
   await interaction.editReply({ content: `Request submitted: <#${channel.id}>` });
+}
+
+// ── CC YouTube lookup ──────────────────────────────────────────────────────────
+async function _ccLookup(channel, channelLink, videoLink) {
+  if (!cfg.YOUTUBE_API_KEY) {
+    await channel.send({ embeds: [new EmbedBuilder().setColor(0xFEE75C)
+      .setDescription('No YouTube API key configured — staff must verify channel and video data manually.')] }).catch(() => {});
+    return;
+  }
+
+  const loadMsg = await channel.send('Fetching YouTube channel & video data...').catch(() => null);
+  if (!loadMsg) return;
+
+  try {
+    const videoId   = yt.extractVideoId(videoLink);
+    if (!videoId) return loadMsg.edit('Could not read video ID — staff please verify manually.');
+
+    const videoInfo = await yt.getVideoInfo(videoId);
+    if (!videoInfo) return loadMsg.edit('Could not fetch video info — staff please verify manually.');
+
+    // Prefer the provided channel URL; fall back to the video's channel ID
+    let channelInfo = await yt.getChannelByUrl(channelLink).catch(() => null);
+    if (!channelInfo) channelInfo = await yt.getChannelById(videoInfo.channelId).catch(() => null);
+
+    const minViews  = cfg.CC_VIDEO_MIN_VIEWS || 10000;
+    const meetsReq  = videoInfo.views >= minViews;
+    const chanUrl   = channelInfo
+      ? `https://www.youtube.com/${channelInfo.handle || 'channel/' + channelInfo.id}`
+      : channelLink;
+
+    const subsDisplay = channelInfo
+      ? (channelInfo.hiddenSubs ? 'Hidden' : channelInfo.subscribers.toLocaleString())
+      : 'N/A';
+
+    const embed = new EmbedBuilder()
+      .setColor(meetsReq ? 0x57F287 : 0xED4245)
+      .setTitle('YouTube Verification')
+      .setThumbnail(channelInfo?.thumbnail || videoInfo.thumbnail)
+      .addFields(
+        { name: 'Channel',        value: channelInfo ? `[${channelInfo.title}](${chanUrl})` : channelLink, inline: true },
+        { name: 'Subscribers',    value: subsDisplay,                                                      inline: true },
+        { name: 'Total Videos',   value: channelInfo ? channelInfo.videos.toLocaleString() : 'N/A',        inline: true },
+        { name: 'Submitted Video',value: `[${videoInfo.title}](https://youtu.be/${videoInfo.id})`,         inline: false },
+        { name: 'Views',          value: videoInfo.views.toLocaleString(),                                 inline: true },
+        { name: 'Likes',          value: videoInfo.likes.toLocaleString(),                                 inline: true },
+        { name: 'Comments',       value: videoInfo.comments.toLocaleString(),                              inline: true },
+        {
+          name:  'View Requirement',
+          value: meetsReq
+            ? `✅ Meets ${minViews.toLocaleString()} view requirement`
+            : `❌ Does not meet requirement — needs ${minViews.toLocaleString()} views, has ${videoInfo.views.toLocaleString()}`,
+          inline: false,
+        },
+      )
+      .setImage(videoInfo.thumbnail)
+      .setTimestamp();
+
+    await loadMsg.edit({ content: '', embeds: [embed] });
+  } catch (e) {
+    await loadMsg.edit(`YouTube data fetch failed: ${e.message} — staff please verify manually.`);
+  }
 }
 
 // ── Close ──────────────────────────────────────────────────────────────────────
