@@ -66,7 +66,7 @@ module.exports = {
   DS_BANS:                    process.env.DATASTORE_BANS     || 'PlayerBans',
   // ProfileStore
   PROFILESTORE_NAME:          process.env.PROFILESTORE_NAME       || 'PlayerStore',
-  PROFILESTORE_KEY_PREFIX:    process.env.PROFILESTORE_KEY_PREFIX || 'Player_',
+  PROFILESTORE_KEY_PREFIX:    process.env.PROFILESTORE_KEY_PREFIX ?? '',
   // YouTube API (for CC applications)
   YOUTUBE_API_KEY:            process.env.YOUTUBE_API_KEY || null,
   CC_VIDEO_MIN_VIEWS:         parseInt(process.env.CC_VIDEO_MIN_VIEWS || '10000'),
