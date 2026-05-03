@@ -585,36 +585,51 @@ client.on('messageCreate', async (msg) => {
     if (!args[1]) return msg.reply('Usage: `.debugstats <RobloxUser>`');
     const loading = await msg.reply('Running DataStore diagnostic...');
     try {
+      const axios  = require('axios');
       const uniId  = process.env.ROBLOX_UNIVERSE_ID;
-      const hasKey = !!process.env.ROBLOX_API_KEY;
+      const apiKey = process.env.ROBLOX_API_KEY;
       const dsName = config.PROFILESTORE_NAME;
       const prefix = config.PROFILESTORE_KEY_PREFIX;
 
       const lines = [
-        `**ROBLOX_UNIVERSE_ID:** \`${uniId || 'NOT SET'}\``,
-        `**ROBLOX_API_KEY:** ${hasKey ? '✅ set' : '❌ NOT SET'}`,
-        `**PROFILESTORE_NAME:** \`${dsName}\``,
-        `**PROFILESTORE_KEY_PREFIX:** \`${prefix}\``,
+        `**Universe:** \`${uniId || 'NOT SET'}\``,
+        `**API Key:** ${apiKey ? '✅ set' : '❌ NOT SET'}`,
+        `**Configured DataStore:** \`${dsName}\`  key prefix: \`${prefix}\``,
+        '',
       ];
 
+      // List all DataStores in the universe so we can see the real names
+      try {
+        const dsListRes = await axios.get(
+          `https://apis.roblox.com/datastores/v1/universes/${uniId}/standard-datastores`,
+          { headers: { 'x-api-key': apiKey }, params: { limit: 20 } }
+        );
+        const names = (dsListRes.data.datastores || []).map(d => `\`${d.name}\``).join(', ');
+        lines.push(`**DataStores in this universe:** ${names || '(none found)'}`);
+      } catch (e) {
+        lines.push(`**DataStore list error:** \`${e.response?.status} ${e.message}\``);
+      }
+
+      // Resolve user and try the configured key
       const user = await resolveRoblox(args[1]);
-      if (!user) { lines.push(`❌ Roblox user not found: \`${args[1]}\``); return loading.edit(lines.join('\n')); }
+      if (!user) { lines.push(`\n❌ Roblox user not found: \`${args[1]}\``); return loading.edit(lines.join('\n')); }
 
       const key = `${prefix}${user.id}`;
-      lines.push(`**Lookup key:** \`${key}\` in DataStore \`${dsName}\``);
+      lines.push(`\n**Looking up** \`${key}\` in \`${dsName}\`:`);
 
-      // Try ProfileStore DataStore
-      let raw;
       try {
-        raw = await roblox.dsGet(dsName, key);
+        const raw = await roblox.dsGet(dsName, key);
         if (raw === null) {
-          lines.push(`⚠️ DataStore returned **null** (key not found or DataStore doesn't exist)`);
+          lines.push(`⚠️ Returned null — wrong DataStore name or key, or player hasn't played yet`);
+          // Try bare userId as fallback key
+          const rawBare = await roblox.dsGet(dsName, String(user.id)).catch(() => null);
+          if (rawBare) lines.push(`✅ Found data under bare key \`${user.id}\` — set PROFILESTORE_KEY_PREFIX to empty`);
         } else {
-          const preview = JSON.stringify(raw).slice(0, 400);
-          lines.push(`✅ DataStore returned data:\n\`\`\`json\n${preview}\n\`\`\``);
+          const preview = JSON.stringify(raw).slice(0, 500);
+          lines.push(`✅ **Found data:**\n\`\`\`json\n${preview}\n\`\`\``);
         }
       } catch (e) {
-        lines.push(`❌ DataStore error: \`${e.response?.status || ''} ${e.message}\``);
+        lines.push(`❌ Error: \`${e.response?.status || ''} ${e.message}\``);
       }
 
       await loading.edit(lines.join('\n'));
