@@ -1190,11 +1190,24 @@ async function executeGameBan(robloxUser, ruleCode, staffUser, reason, replyMsg,
   recordAction(staffUser.id, 'GBAN', robloxUser.name);
   await logAction(client, { action: 'GBAN', target: { username: robloxUser.name, robloxId: userId }, staff: { tag: staffUser.tag, id: staffUser.id }, rule: ruleCode, duration: label, reason, permanent, extra: evidence ? `Evidence: ${evidence}` : null });
 
+  // Platform-level ban via Open Cloud User Restrictions API
+  try {
+    await roblox.restrictUser(userId, {
+      days, permanent,
+      privateReason: `Rule ${ruleCode} — banned by ${staffUser.tag}. ${reason}`.slice(0, 1000),
+      displayReason: `Banned for Rule ${ruleCode}${permanent ? ' permanently' : ` for ${label}`}.`,
+    });
+  } catch (e) {
+    const status = e.response?.status;
+    console.error('[gban] User Restrictions API failed:', status, e.message);
+    if (status === 403) console.warn('[gban] Add universe-user-restrictions:write to your API key at create.roblox.com/credentials');
+  }
+
   // Kick the player immediately if they are currently in-game
   await roblox.publishMessage('ModAction', {
     action: 'ban',
     userId: String(userId),
-    reason: `Rule ${ruleCode} — ${RULES[ruleCode].name}. ${reason}`,
+    reason: `Rule ${ruleCode} — ${RULES[ruleCode]?.name || 'Custom'}. ${reason}`,
     duration: permanent ? 'Permanent' : label,
   });
 }
@@ -1234,7 +1247,14 @@ async function executeGameUnban(robloxUser, staffUser, reason, replyMsg) {
   recordAction(staffUser.id, 'UNGBAN', robloxUser.name);
   await logAction(client, { action: 'UNGBAN', target: { username: robloxUser.name, robloxId: userId }, staff: { tag: staffUser.tag, id: staffUser.id }, reason });
 
-  // Notify live servers the ban was lifted (so they stop showing ban screen if player is in a loading loop)
+  // Lift platform-level restriction
+  try {
+    await roblox.unrestrictUser(userId);
+  } catch (e) {
+    console.error('[ungban] User Restrictions API failed:', e.response?.status, e.message);
+  }
+
+  // Notify live servers the ban was lifted
   await roblox.publishMessage('ModAction', { action: 'unban', userId: String(userId) });
 }
 

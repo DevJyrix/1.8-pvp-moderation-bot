@@ -162,6 +162,43 @@ async function saveBanData(userId, banData) {
   return dsSet(DS_BANS, String(userId), banData);
 }
 
+// ── User Restrictions (Open Cloud v2) ─────────────────────────────────────────
+// Requires API key permission: universe-user-restrictions:write
+
+async function restrictUser(userId, { days, permanent, privateReason, displayReason }) {
+  if (!ROBLOX_API_KEY || !UNIVERSE_ID) { console.warn('[restrict] No API key/Universe ID'); return null; }
+  const restriction = {
+    active: true,
+    privateReason: (privateReason || 'Banned by staff').slice(0, 1000),
+    displayReason: (displayReason || 'You have been banned.').slice(0, 400),
+  };
+  if (!permanent && days > 0) restriction.duration = `${Math.round(days * 86400)}s`;
+  // Omitting duration = permanent ban
+
+  const { data } = await axios.patch(
+    `https://apis.roblox.com/cloud/v2/universes/${UNIVERSE_ID}/user-restrictions/${userId}`,
+    { gameJoinRestriction: restriction },
+    {
+      headers: { 'x-api-key': ROBLOX_API_KEY, 'content-type': 'application/json' },
+      params:  { updateMask: 'gameJoinRestriction' },
+    }
+  );
+  return data;
+}
+
+async function unrestrictUser(userId) {
+  if (!ROBLOX_API_KEY || !UNIVERSE_ID) { console.warn('[restrict] No API key/Universe ID'); return null; }
+  const { data } = await axios.patch(
+    `https://apis.roblox.com/cloud/v2/universes/${UNIVERSE_ID}/user-restrictions/${userId}`,
+    { gameJoinRestriction: { active: false } },
+    {
+      headers: { 'x-api-key': ROBLOX_API_KEY, 'content-type': 'application/json' },
+      params:  { updateMask: 'gameJoinRestriction' },
+    }
+  );
+  return data;
+}
+
 // ── Messaging Service ──────────────────────────────────────────────────────────
 
 async function publishMessage(topic, data) {
@@ -195,5 +232,6 @@ function formatPlaytime(seconds) {
 module.exports = {
   getUserByName, getUserById, getAvatar,
   getPlayerStats, savePlayerStats, getBanData, saveBanData,
+  restrictUser, unrestrictUser,
   formatPlaytime, dsGet, dsSet, publishMessage,
 };
