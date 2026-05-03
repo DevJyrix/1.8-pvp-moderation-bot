@@ -196,6 +196,26 @@ async function saveBanData(userId, banData) {
 // ── User Restrictions (Open Cloud v2) ─────────────────────────────────────────
 // Requires API key permission: universe-user-restrictions:write
 
+async function _restrictionPatch(userId, body) {
+  const url     = `https://apis.roblox.com/cloud/v2/universes/${UNIVERSE_ID}/user-restrictions/${userId}`;
+  const headers = { 'x-api-key': ROBLOX_API_KEY, 'content-type': 'application/json' };
+  const params  = { updateMask: 'gameJoinRestriction' };
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const { data } = await axios.patch(url, body, { headers, params });
+      return data;
+    } catch (e) {
+      if (e.response?.status === 429 && attempt < 2) {
+        const retryAfter = parseInt(e.response.headers['retry-after'] || '2');
+        console.warn(`[restrict] 429 rate-limited — retrying in ${retryAfter}s (attempt ${attempt + 1})`);
+        await new Promise(r => setTimeout(r, retryAfter * 1000));
+        continue;
+      }
+      throw e;
+    }
+  }
+}
+
 async function restrictUser(userId, { days, permanent, privateReason, displayReason }) {
   if (!ROBLOX_API_KEY || !UNIVERSE_ID) { console.warn('[restrict] No API key/Universe ID'); return null; }
   const restriction = {
@@ -204,17 +224,7 @@ async function restrictUser(userId, { days, permanent, privateReason, displayRea
     displayReason: (displayReason || 'You have been banned.').slice(0, 400),
   };
   if (!permanent && days > 0) restriction.duration = `${Math.round(days * 86400)}s`;
-  // Omitting duration = permanent ban
-
-  const { data } = await axios.patch(
-    `https://apis.roblox.com/cloud/v2/universes/${UNIVERSE_ID}/user-restrictions/${userId}`,
-    { gameJoinRestriction: restriction },
-    {
-      headers: { 'x-api-key': ROBLOX_API_KEY, 'content-type': 'application/json' },
-      params:  { updateMask: 'gameJoinRestriction' },
-    }
-  );
-  return data;
+  return _restrictionPatch(userId, { gameJoinRestriction: restriction });
 }
 
 async function getUserRestriction(userId) {
@@ -228,15 +238,7 @@ async function getUserRestriction(userId) {
 
 async function unrestrictUser(userId) {
   if (!ROBLOX_API_KEY || !UNIVERSE_ID) { console.warn('[restrict] No API key/Universe ID'); return null; }
-  const { data } = await axios.patch(
-    `https://apis.roblox.com/cloud/v2/universes/${UNIVERSE_ID}/user-restrictions/${userId}`,
-    { gameJoinRestriction: { active: false } },
-    {
-      headers: { 'x-api-key': ROBLOX_API_KEY, 'content-type': 'application/json' },
-      params:  { updateMask: 'gameJoinRestriction' },
-    }
-  );
-  return data;
+  return _restrictionPatch(userId, { gameJoinRestriction: { active: false } });
 }
 
 // ── Messaging Service ──────────────────────────────────────────────────────────

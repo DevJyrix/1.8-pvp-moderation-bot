@@ -395,18 +395,39 @@ client.on('messageCreate', async (msg) => {
   }
 
   // ── .gban — Game Staff / Senior / Admin
+  // Usage: .gban <user> <Rule>    [reason]   e.g. .gban 0_1uv A1 test
+  //        .gban <user> <1d|7d|perm> [reason]  e.g. .gban 0_1uv 3d evading
   if (cmd === '.gban') {
     if (!config.canUseGameCommands(member) && !config.isAdmin(member)) return;
-    if (!args[1] || !args[2]) return msg.reply(`Usage: \`.gban <RobloxUser> <Rule> [reason]\`\nRules: ${Object.keys(RULES).join(', ')}`);
+    if (!args[1] || !args[2]) return msg.reply(
+      `Usage: \`.gban <RobloxUser> <Rule|Duration> [reason]\`\n` +
+      `Rules: ${Object.keys(RULES).join(', ')}\n` +
+      `Duration examples: \`1d\`, \`7d\`, \`30d\`, \`perm\``
+    );
     const ruleCode = args[2].toUpperCase();
-    if (!RULES[ruleCode]) return msg.reply(`Invalid rule. Valid: ${Object.keys(RULES).join(', ')}`);
+    const isRule   = !!RULES[ruleCode];
+    let customDur  = null;
+    if (!isRule) {
+      customDur = parseGameDuration(args[2]);
+      if (!customDur) return msg.reply(
+        `Invalid rule or duration. Rules: ${Object.keys(RULES).join(', ')}\n` +
+        `Duration examples: \`1d\`, \`7d\`, \`30d\`, \`perm\``
+      );
+    }
     const raid = checkRaid(msg.author.id);
     if (!raid.allowed) return msg.reply(raid.reason);
     const loading = await msg.reply('Processing...');
     try {
-      const user = await resolveRoblox(args[1]);
+      const user   = await resolveRoblox(args[1]);
       if (!user) return loading.edit(`No Roblox user found for \`${args[1]}\``);
-      await executeGameBan(user, ruleCode, msg.author, args.slice(3).join(' ') || 'No reason provided', loading);
+      const reason = args.slice(3).join(' ') || 'No reason provided';
+      if (isRule) {
+        await executeGameBan(user, ruleCode, msg.author, reason, loading);
+      } else {
+        await executeGameBan(user, 'CUSTOM', msg.author, reason, loading, {
+          label: customDur.label, days: customDur.days, permanent: customDur.permanent,
+        });
+      }
     } catch (e) { loading.edit(`Error: ${e.message}`); }
     return;
   }
@@ -552,6 +573,7 @@ client.on('messageCreate', async (msg) => {
           { name: 'Player', value: `[${user.name}](https://www.roblox.com/users/${user.id}/profile)`, inline: true },
           { name: 'Field',  value: field,         inline: true },
           { name: 'Value',  value: String(value), inline: true },
+          { name: 'Note',   value: 'Player must be **offline** and **rejoin** for changes to appear in-game (ProfileStore caches data while the player is online).', inline: false },
         ).setTimestamp();
       await loading.edit({ content: '', embeds: [embed] });
       // Log to stats channel specifically
@@ -1797,7 +1819,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const original = await interaction.message?.fetch().catch(() => null);
         if (original) await original.edit({ embeds: [embed], components: statsRow(userId, isBanned, true) });
       } catch {}
-      await interaction.editReply({ content: `**${field}** updated to **${value}** for ${user.name}.` });
+      await interaction.editReply({ content: `**${field}** updated to **${value}** for ${user.name}.\n-# Player must be offline and rejoin for changes to appear in-game.` });
     } catch (e) { await interaction.editReply(`Error: ${e.message}`); }
     return;
   }
@@ -1823,6 +1845,23 @@ function parseDuration(s) {
   const m = s.match(/^(\d+)(s|m|h|d)$/i);
   if (!m) return null;
   return parseInt(m[1]) * { s: 1000, m: 60000, h: 3600000, d: 86400000 }[m[2].toLowerCase()];
+}
+
+// Returns { days, label, permanent } for game bans, or null if unrecognised
+function parseGameDuration(s) {
+  const lower = s.toLowerCase().trim();
+  if (lower === 'perm' || lower === 'permanent' || lower === 'perma') return { days: -1, label: 'Permanent', permanent: true };
+  const m = lower.match(/^(\d+(?:\.\d+)?)(h|d|w)$/);
+  if (!m) return null;
+  const n = parseFloat(m[1]);
+  let days;
+  switch (m[2]) {
+    case 'h': days = n / 24; break;
+    case 'd': days = n;      break;
+    case 'w': days = n * 7;  break;
+  }
+  const unit = m[2] === 'h' ? `Hour${n !== 1 ? 's' : ''}` : m[2] === 'd' ? `Day${n !== 1 ? 's' : ''}` : `Week${n !== 1 ? 's' : ''}`;
+  return { days, label: `${n} ${unit}`, permanent: false };
 }
 
 client.login(config.DISCORD_TOKEN);
