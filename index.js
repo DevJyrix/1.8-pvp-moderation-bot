@@ -1154,26 +1154,37 @@ async function executeGameBan(robloxUser, ruleCode, staffUser, reason, replyMsg,
   banData.history = history;
   banData.active  = entry;
 
+  // DataStore write for ban history (non-fatal — User Restrictions is the real enforcer)
+  let dsWriteWarning = null;
   try {
     await roblox.saveBanData(userId, banData);
   } catch (e) {
     console.error('[gban] DS write failed:', e.message);
-    // If the DataStore key doesn't exist yet (404), the game has never written to PlayerBans.
-    // Tell the mod exactly how to fix it — run /setban in the Studio emulator first.
-    const hint = e.message.includes('404') || e.message.includes('not found')
-      ? '\n\n**How to fix:** The `PlayerBans` DataStore doesn\'t exist yet. ' +
-        'Open your game in Roblox Studio, run the `DataStoreEmulator` script, ' +
-        'then type `/setban YourUsername A1` in the game chat. ' +
-        'This creates the DataStore. After that, game bans from Discord will work.'
-      : '';
-    if (replyMsg) await replyMsg.edit({ content: `DataStore write failed: ${e.message}${hint}`, embeds: [], components: [] });
-    return;
+    dsWriteWarning = e.message.includes('403')
+      ? 'Ban history not saved (DataStore 403 — API key needs `universe-datastores.objects:write`). Player IS banned via User Restrictions.'
+      : `Ban history not saved: ${e.message}`;
   }
 
   const ruleDisplay = ruleCode === 'CUSTOM' ? 'Custom (Admin Override)' : `${ruleCode} — ${(RULES[ruleCode]?.name || 'Custom')}`;
 
+  // Platform-level ban via Open Cloud User Restrictions API
+  let restrictError = null;
+  try {
+    await roblox.restrictUser(userId, {
+      days, permanent,
+      privateReason: `Rule ${ruleCode} — banned by ${staffUser.tag}. ${reason}`.slice(0, 1000),
+      displayReason: `Banned for Rule ${ruleCode}${permanent ? ' permanently' : ` for ${label}`}.`,
+    });
+  } catch (e) {
+    restrictError = e;
+    const status = e.response?.status;
+    console.error('[gban] User Restrictions API failed:', status, e.message);
+    if (status === 403) console.warn('[gban] Add universe-user-restrictions:write to your API key at create.roblox.com/credentials');
+  }
+
   const embed = new EmbedBuilder()
-    .setColor(0xED4245).setTitle('Game Ban Applied')
+    .setColor(restrictError ? 0xFEE75C : 0xED4245)
+    .setTitle(restrictError ? 'Game Ban — Partial (history only)' : 'Game Ban Applied')
     .setURL(`https://www.roblox.com/users/${userId}/profile`)
     .addFields(
       { name: 'Player',   value: `[${robloxUser.name}](https://www.roblox.com/users/${userId}/profile)`, inline: true },
@@ -1182,26 +1193,14 @@ async function executeGameBan(robloxUser, ruleCode, staffUser, reason, replyMsg,
       { name: 'Offense',  value: ruleCode === 'CUSTOM' ? 'Custom' : `#${effectivePrior + 1}`, inline: true },
       { name: 'Reason',   value: reason, inline: false },
       ...(expires ? [{ name: 'Expires', value: `<t:${Math.floor(new Date(expires).getTime()/1000)}:F>`, inline: false }] : []),
-      // Evidence is logged in the staff embed only — never shown to the banned player
       ...(evidence ? [{ name: 'Evidence (staff only)', value: evidence, inline: false }] : []),
+      ...(restrictError ? [{ name: '⚠️ User Restrictions API', value: `${restrictError.response?.status === 403 ? 'Add `universe-user-restrictions:write` to API key at create.roblox.com/credentials' : restrictError.message}`, inline: false }] : []),
+      ...(dsWriteWarning ? [{ name: '⚠️ History', value: dsWriteWarning, inline: false }] : []),
     ).setTimestamp();
 
   if (replyMsg) await replyMsg.edit({ content: '', embeds: [embed], components: [] });
   recordAction(staffUser.id, 'GBAN', robloxUser.name);
   await logAction(client, { action: 'GBAN', target: { username: robloxUser.name, robloxId: userId }, staff: { tag: staffUser.tag, id: staffUser.id }, rule: ruleCode, duration: label, reason, permanent, extra: evidence ? `Evidence: ${evidence}` : null });
-
-  // Platform-level ban via Open Cloud User Restrictions API
-  try {
-    await roblox.restrictUser(userId, {
-      days, permanent,
-      privateReason: `Rule ${ruleCode} — banned by ${staffUser.tag}. ${reason}`.slice(0, 1000),
-      displayReason: `Banned for Rule ${ruleCode}${permanent ? ' permanently' : ` for ${label}`}.`,
-    });
-  } catch (e) {
-    const status = e.response?.status;
-    console.error('[gban] User Restrictions API failed:', status, e.message);
-    if (status === 403) console.warn('[gban] Add universe-user-restrictions:write to your API key at create.roblox.com/credentials');
-  }
 
   // Kick the player immediately if they are currently in-game
   await roblox.publishMessage('ModAction', {

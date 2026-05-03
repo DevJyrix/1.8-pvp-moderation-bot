@@ -605,7 +605,7 @@ async function submitArt(interaction) {
 async function _ccLookup(channel, channelLink, videoLink) {
   if (!cfg.YOUTUBE_API_KEY) {
     await channel.send({ embeds: [new EmbedBuilder().setColor(0xFEE75C)
-      .setDescription('No YouTube API key configured — staff must verify channel and video data manually.')] }).catch(() => {});
+      .setDescription('Ignore this message, reminder to myself to setup YouTube API key.')] }).catch(() => {});
     return;
   }
 
@@ -711,41 +711,56 @@ async function _appealLookup(channel, robloxUsername, creator, identityVerified)
     const user  = basic ? await roblox.getUserById(basic.id).catch(() => null) : null;
     if (!user) return loadMsg.edit(`Could not find Roblox user \`${robloxUsername}\`. Staff please verify manually.`);
 
-    const [avatarUrl, banData, stats] = await Promise.all([
+    const [avatarUrl, banData, stats, restriction] = await Promise.all([
       roblox.getAvatar(user.id).catch(() => null),
       roblox.getBanData(user.id).catch(() => ({ active: null, history: [] })),
       roblox.getPlayerStats(user.id).catch(() => null),
+      roblox.getUserRestriction(user.id).catch(() => null),
     ]);
 
-    const activeBan = banData?.active && isActiveBan(banData.active) ? banData.active : null;
-    const history   = (banData?.history || []).filter(b => !b._hidden);
+    // Platform restriction takes priority; DataStore is fallback
+    const platformBan = restriction?.gameJoinRestriction?.active ? restriction.gameJoinRestriction : null;
+    const activeBan   = banData?.active && isActiveBan(banData.active) ? banData.active : null;
+    const isBanned    = !!(platformBan || activeBan);
+    const history     = (banData?.history || []).filter(b => !b._hidden);
 
     const descText = identityVerified
       ? `Identity confirmed via RoVer — nickname matches **[${user.name}](https://www.roblox.com/users/${user.id}/profile)**.`
       : `Staff note: appellant claims to be **[${user.name}](https://www.roblox.com/users/${user.id}/profile)**. Verify identity before acting.`;
 
     const embed = new EmbedBuilder()
-      .setColor(activeBan ? 0xED4245 : 0x57F287)
+      .setColor(isBanned ? 0xED4245 : 0x57F287)
       .setTitle('Account Lookup')
       .setThumbnail(avatarUrl)
       .setURL(`https://www.roblox.com/users/${user.id}/profile`)
       .setDescription(descText)
       .addFields(
-        { name: 'Username',    value: `[${user.name}](https://www.roblox.com/users/${user.id}/profile)`, inline: true },
-        { name: 'User ID',     value: `\`${user.id}\``, inline: true },
+        { name: 'Username', value: `[${user.name}](https://www.roblox.com/users/${user.id}/profile)`, inline: true },
+        { name: 'User ID',  value: `\`${user.id}\``, inline: true },
       );
 
-    if (activeBan) {
+    if (platformBan) {
+      // Duration parsing: "604800s" → human readable
+      const durSecs  = platformBan.duration ? parseInt(platformBan.duration) : null;
+      const startTs  = platformBan.startTime ? Math.floor(new Date(platformBan.startTime).getTime() / 1000) : null;
+      const expireTs = durSecs && startTs ? startTs + durSecs : null;
+      embed.addFields({ name: 'Platform Ban (User Restrictions)', value: [
+        `Status: **Active**`,
+        platformBan.privateReason ? `Reason: ${platformBan.privateReason}` : null,
+        startTs  ? `Issued: <t:${startTs}:F>` : null,
+        expireTs ? `Expires: <t:${expireTs}:F>` : `Expires: **Permanent**`,
+      ].filter(Boolean).join('\n') });
+    } else if (activeBan) {
       const rule  = RULES[activeBan.rule];
       const tsExp = activeBan.permanent ? null : Math.floor(new Date(activeBan.expires).getTime() / 1000);
-      embed.addFields({ name: 'Active Ban', value: [
+      embed.addFields({ name: 'Active Ban (DataStore record)', value: [
         `Rule: ${activeBan.rule} — ${rule?.name || 'Unknown'}`,
         `Reason: ${activeBan.reason || 'N/A'}`,
         `Issued by: ${activeBan.bannedBy || 'N/A'}`,
         `Expires: ${activeBan.permanent ? 'Permanent' : `<t:${tsExp}:F>`}`,
       ].join('\n') });
     } else {
-      embed.addFields({ name: 'Ban Status', value: 'No active game ban found.' });
+      embed.addFields({ name: 'Ban Status', value: 'No active ban found.' });
     }
 
     if (history.length) {
@@ -768,9 +783,9 @@ async function _appealLookup(channel, robloxUsername, creator, identityVerified)
 
     embed.setTimestamp();
     await loadMsg.edit({ content: '', embeds: [embed] });
-    if (!activeBan) {
+    if (!isBanned) {
       await channel.send({ embeds: [new EmbedBuilder().setColor(0xFEE75C)
-        .setDescription(`No active game ban found for **${user.name}**. This may be a Discord ban appeal or the ban has already expired.`)] });
+        .setDescription(`No active ban found for **${user.name}**. This may be a Discord ban appeal or the ban has already expired.`)] });
     }
   } catch (e) {
     await loadMsg.edit(`Auto-lookup failed: ${e.message}. Staff will check manually.`);

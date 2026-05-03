@@ -186,6 +186,15 @@ async function restrictUser(userId, { days, permanent, privateReason, displayRea
   return data;
 }
 
+async function getUserRestriction(userId) {
+  if (!ROBLOX_API_KEY || !UNIVERSE_ID) return null;
+  const { data } = await axios.get(
+    `https://apis.roblox.com/cloud/v2/universes/${UNIVERSE_ID}/user-restrictions/${userId}`,
+    { headers: { 'x-api-key': ROBLOX_API_KEY } }
+  );
+  return data; // { gameJoinRestriction: { active, startTime, duration?, privateReason, displayReason } }
+}
+
 async function unrestrictUser(userId) {
   if (!ROBLOX_API_KEY || !UNIVERSE_ID) { console.warn('[restrict] No API key/Universe ID'); return null; }
   const { data } = await axios.patch(
@@ -232,6 +241,6 @@ function formatPlaytime(seconds) {
 module.exports = {
   getUserByName, getUserById, getAvatar,
   getPlayerStats, savePlayerStats, getBanData, saveBanData,
-  restrictUser, unrestrictUser,
+  restrictUser, unrestrictUser, getUserRestriction,
   formatPlaytime, dsGet, dsSet, publishMessage,
 };
