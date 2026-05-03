@@ -1330,52 +1330,74 @@ client.on(Events.InteractionCreate, async (interaction) => {
     return;
   }
 
-  // /gamestats — fetch live game data from Roblox API
+  // /gamestats — fetch live game data from Roblox Open Cloud + public API
   if (interaction.isChatInputCommand() && interaction.commandName === 'gamestats') {
     if (!config.isAdmin(interaction.member)) return interaction.reply({ content: 'Admin only.', flags: 64 });
     await interaction.deferReply({ flags: 64 });
     try {
-      const uniId    = process.env.ROBLOX_UNIVERSE_ID;
-      const placeId  = process.env.ROBLOX_PLACE_ID || uniId;
-      const gameUrl  = process.env.ROBLOX_GAME_URL || `https://www.roblox.com/games/${placeId}`;
+      const axios   = require('axios');
+      const apiKey  = process.env.ROBLOX_API_KEY;
+      let   placeId = process.env.ROBLOX_PLACE_ID;
+      let   uniId   = process.env.ROBLOX_UNIVERSE_ID;
 
-      // Fetch universe info from Roblox API
-      const axios = require('axios');
-      const [uniRes, thumbRes] = await Promise.all([
+      // Resolve universe ID from place ID via Open Cloud if needed
+      if (placeId && (!uniId || uniId === placeId)) {
+        try {
+          const uniRes = await axios.get(
+            `https://apis.roblox.com/universes/v1/places/${placeId}/universe`,
+            apiKey ? { headers: { 'x-api-key': apiKey } } : {}
+          );
+          uniId = String(uniRes.data.universeId);
+        } catch (e) {
+          console.warn('[gamestats] Place→Universe lookup failed:', e.response?.status, e.message);
+        }
+      }
+
+      if (!uniId) return interaction.editReply('Set `ROBLOX_UNIVERSE_ID` or `ROBLOX_PLACE_ID` in your Railway environment variables.');
+
+      const gameUrl = process.env.ROBLOX_GAME_URL || `https://www.roblox.com/games/${placeId || uniId}`;
+
+      const [gamesRes, thumbRes, voteRes] = await Promise.all([
         axios.get(`https://games.roblox.com/v1/games?universeIds=${uniId}`).catch(() => null),
         axios.get(`https://thumbnails.roblox.com/v1/games/icons?universeIds=${uniId}&size=512x512&format=Png&isCircular=false`).catch(() => null),
+        axios.get(`https://games.roblox.com/v1/games/votes?universeIds=${uniId}`).catch(() => null),
       ]);
 
-      const game      = uniRes?.data?.data?.[0];
-      const thumbUrl  = thumbRes?.data?.data?.[0]?.imageUrl || null;
+      const game     = gamesRes?.data?.data?.[0];
+      const thumbUrl = thumbRes?.data?.data?.[0]?.imageUrl || null;
+      const votes    = voteRes?.data?.data?.[0];
 
-      if (!game) return interaction.editReply('Could not fetch game data. Check ROBLOX_UNIVERSE_ID in .env.');
+      if (!game) return interaction.editReply('Could not fetch game data. Check `ROBLOX_UNIVERSE_ID` is correct.');
 
-      const updated   = new Date(game.updated).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
-      const created   = new Date(game.created).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+      const upvotes   = votes?.upVotes   ?? 0;
+      const downvotes = votes?.downVotes ?? 0;
+      const total     = upvotes + downvotes;
+      const rating    = total > 0 ? `${Math.round((upvotes / total) * 100)}%` : 'N/A';
+
+      const updated = new Date(game.updated).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+      const created = new Date(game.created).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
 
       const embed = new EmbedBuilder()
-        .setColor(0x5865F2)
+        .setColor(0x00B06F)
         .setTitle(game.name)
         .setURL(gameUrl)
         .setDescription(game.description?.slice(0, 200) || 'No description.')
         .setThumbnail(thumbUrl)
         .addFields(
-          { name: 'Active Players',  value: game.playing?.toLocaleString()  || '0',  inline: true },
-          { name: 'Total Visits',    value: game.visits?.toLocaleString()   || '0',  inline: true },
-          { name: 'Favourites',      value: game.favoritedCount?.toLocaleString() || '0', inline: true },
-          { name: 'Max Players',     value: `${game.maxPlayers}`,                   inline: true },
-          { name: 'Genre',           value: game.genre || 'N/A',                    inline: true },
-          { name: 'Game Rating',     value: game.allowedGearCategories?.length ? 'Allowed' : 'All Ages', inline: true },
-          { name: 'Created',         value: created,                                inline: true },
-          { name: 'Last Updated',    value: updated,                                inline: true },
-          { name: 'Universe ID',     value: `\`${uniId}\``,                        inline: true },
-          { name: 'Game Link',       value: `[Open in Roblox](${gameUrl})`,         inline: false },
+          { name: 'Active Players', value: (game.playing ?? 0).toLocaleString(),           inline: true },
+          { name: 'Total Visits',   value: (game.visits  ?? 0).toLocaleString(),           inline: true },
+          { name: 'Favourites',     value: (game.favoritedCount ?? 0).toLocaleString(),    inline: true },
+          { name: 'Rating',         value: `${rating}  (${upvotes.toLocaleString()} 👍 / ${downvotes.toLocaleString()} 👎)`, inline: false },
+          { name: 'Max Players',    value: `${game.maxPlayers}`,                           inline: true },
+          { name: 'Genre',          value: game.genre || 'N/A',                            inline: true },
+          { name: 'Created',        value: created,                                        inline: true },
+          { name: 'Last Updated',   value: updated,                                        inline: true },
+          { name: 'Universe ID',    value: `\`${uniId}\``,                                inline: true },
+          { name: 'Place ID',       value: placeId ? `\`${placeId}\`` : 'N/A',            inline: true },
         )
-        .setFooter({ text: 'Data from Roblox API' })
+        .setFooter({ text: 'Roblox Open Cloud + Games API' })
         .setTimestamp();
 
-      // Button to open the game
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('Play Now').setURL(gameUrl),
       );
