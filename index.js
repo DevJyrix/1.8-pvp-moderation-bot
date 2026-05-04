@@ -24,6 +24,7 @@ const {
 const { addInfraction, removeInfraction, clearWarnsAndNotes, buildFullInfractionEmbed } = require('./infractions');
 const { recordAction, buildStatsEmbed: buildModStatsEmbed, buildModStatsRow } = require('./modstats');
 const music = require('./music');
+const apps  = require('./apps');
 
 // ─── Client ────────────────────────────────────────────────────────────────────
 const client = new Client({
@@ -37,6 +38,9 @@ const client = new Client({
     GatewayIntentBits.GuildVoiceStates,
   ],
 });
+
+// Tracks messages per user since bot start (for application embeds)
+const msgCountMap = new Map();
 
 // ─── Slash commands ────────────────────────────────────────────────────────────
 const slashDefs = [
@@ -89,6 +93,20 @@ const slashDefs = [
     .setName('gamestats')
     .setDescription('Show game statistics (Admin only)')
     .setDefaultMemberPermissions(0),
+  new SlashCommandBuilder()
+    .setName('apps')
+    .setDescription('Open or close applications (Admin only)')
+    .setDefaultMemberPermissions(0)
+    .addStringOption(o => o
+      .setName('action')
+      .setDescription('What to do')
+      .setRequired(true)
+      .addChoices(
+        { name: 'Open applications',    value: 'open'  },
+        { name: 'Close applications',   value: 'close' },
+        { name: 'Post/refresh panel',   value: 'setup' },
+      )
+    ),
 ].map(c => c.toJSON());
 
 // ─── Ready ─────────────────────────────────────────────────────────────────────
@@ -334,6 +352,9 @@ async function logStatChange(client, robloxUser, staffTag, field, value, action)
 // ─── Message commands ──────────────────────────────────────────────────────────
 client.on('messageCreate', async (msg) => {
   if (msg.author.bot || !msg.guild) return;
+  // Track message counts for application embeds
+  msgCountMap.set(msg.author.id, (msgCountMap.get(msg.author.id) || 0) + 1);
+
   const member = msg.member;
   const args   = msg.content.trim().split(/\s+/);
   const cmd    = args[0]?.toLowerCase();
@@ -1288,12 +1309,8 @@ async function executeGameUnban(robloxUser, staffUser, reason, replyMsg) {
 async function executeGameKick(robloxUser, staffUser, reason, replyMsg) {
   const userId = robloxUser.id;
 
-  // Publish live kick signal — player is kicked instantly if online
-  await roblox.publishMessage('ModAction', {
-    action: 'kick',
-    userId: String(userId),
-    reason: reason,
-  });
+  // Publish live kick signal using KickUser topic (hooked up in-game)
+  await roblox.publishMessage('KickUser', { playerName: robloxUser.name });
 
   const embed = new EmbedBuilder().setColor(0xFEE75C).setTitle('Game Kick')
     .setURL(`https://www.roblox.com/users/${userId}/profile`)
@@ -1837,6 +1854,54 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await interaction.editReply({ embeds: [embed], components: [row] });
     } catch (e) { interaction.followUp({ content: `Error: ${e.message}`, flags: 64 }); }
     return;
+  }
+
+  // ── /apps slash command ────────────────────────────────────────────────────
+  if (interaction.isChatInputCommand() && interaction.commandName === 'apps') {
+    if (!config.isAdmin(interaction.member)) {
+      return interaction.reply({ content: 'Admin only.', flags: 64 });
+    }
+    const action = interaction.options.getString('action');
+    if (action === 'open') {
+      apps.setAppsOpen(true);
+      await apps.refreshPanel(client);
+      return interaction.reply({ content: '✅ Applications are now **open**.', flags: 64 });
+    }
+    if (action === 'close') {
+      apps.setAppsOpen(false);
+      await apps.refreshPanel(client);
+      return interaction.reply({ content: '🔒 Applications are now **closed**.', flags: 64 });
+    }
+    if (action === 'setup') {
+      const ch = await client.channels.fetch(config.APP_CHANNEL_ID).catch(() => null);
+      if (!ch) return interaction.reply({ content: 'App channel not found. Check APP_CHANNEL_ID in config.', flags: 64 });
+      await apps.postPanel(ch);
+      return interaction.reply({ content: `✅ Application panel posted in <#${config.APP_CHANNEL_ID}>.`, flags: 64 });
+    }
+    return;
+  }
+
+  // ── Application buttons (open modal) ──────────────────────────────────────
+  if (interaction.isButton() && interaction.customId.startsWith('app_open_')) {
+    return apps.handleAppButton(interaction);
+  }
+
+  // ── Application modal submit ──────────────────────────────────────────────
+  if (interaction.type === InteractionType.ModalSubmit && interaction.customId.startsWith('app_modal_')) {
+    return apps.handleAppModal(interaction, client, msgCountMap);
+  }
+
+  // ── Accept / Deny buttons ─────────────────────────────────────────────────
+  if (interaction.isButton() && interaction.customId.startsWith('app_accept_')) {
+    return apps.handleAppAccept(interaction, client);
+  }
+  if (interaction.isButton() && interaction.customId.startsWith('app_deny_')) {
+    return apps.handleAppDeny(interaction, client);
+  }
+
+  // ── Close app ticket button ───────────────────────────────────────────────
+  if (interaction.isButton() && interaction.customId === 'close_app_ticket') {
+    return apps.handleCloseAppTicket(interaction);
   }
 });
 

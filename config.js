@@ -57,6 +57,11 @@ module.exports = {
   // Fallback for anything else
   MOD_LOG_CHANNEL_ID:         process.env.MOD_LOG_CHANNEL_ID,
   STATS_LOG_CHANNEL_ID:       process.env.STATS_LOG_CHANNEL_ID || process.env.MOD_LOG_CHANNEL_ID,
+  // Applications
+  APP_CHANNEL_ID:             '1500623487738450010',
+  APP_LOG_CHANNEL_ID:         '1500623669825896578',
+  ACTIVE_MEMBER_ROLE_ID:      process.env.ACTIVE_MEMBER_ROLE_ID  || null,
+  DEDICATED_MEMBER_ROLE_ID:   process.env.DEDICATED_MEMBER_ROLE_ID || null,
   // Staff duty role — pinged on new tickets
   STAFF_DUTY_ROLE_ID:         process.env.STAFF_DUTY_ROLE_ID || null,
   // Roblox
