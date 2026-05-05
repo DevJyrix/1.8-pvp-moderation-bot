@@ -69,7 +69,7 @@ function renderMsg(msg) {
 }
 
 function buildHTML(channel, messages, meta) {
-  const { number, type, creatorTag, openedAt, closedBy } = meta;
+  const { number, type, creatorTag, openedAt, closedBy, closeReason } = meta;
   const title = type === 'appeal' ? 'Ban Appeal' : 'Player Report';
   const dur   = (() => {
     const ms = Date.now() - new Date(openedAt).getTime();
@@ -125,6 +125,7 @@ code{background:rgba(255,255,255,.1);border-radius:3px;padding:1px 4px;font-size
   <div class="mi"><span class="ml">Closed by</span><span class="mv">${esc(closedBy)}</span></div>
   <div class="mi"><span class="ml">Duration</span><span class="mv">${dur}</span></div>
   <div class="mi"><span class="ml">Messages</span><span class="mv">${messages.length}</span></div>
+  ${closeReason ? `<div class="mi"><span class="ml">Close Reason</span><span class="mv">${esc(closeReason)}</span></div>` : ''}
 </div>
 <div class="msgs">${messages.map(renderMsg).join('\n') || '<p style="color:#6b7280;padding:16px 0">No messages captured.</p>'}</div>
 <div class="ft">1.8 Arena — Transcript generated ${new Date().toUTCString()}</div>
@@ -140,14 +141,16 @@ async function generateAndPostTranscript(client, channel, ticketMeta, overrideLo
   const fname  = `transcript-${ticketMeta.type}-${ticketMeta.number}.html`;
   const attachment = new AttachmentBuilder(buffer, { name: fname });
 
+  const TYPE_LABELS = { gr: 'Game Report', dr: 'Discord Report', appeal: 'Appeal', cc: 'CC Application', art: 'Art Request' };
   const embed = new EmbedBuilder()
     .setColor(0x5865F2)
     .setTitle(`Ticket Transcript — #${ticketMeta.number}`)
     .addFields(
-      { name: 'Type',       value: ticketMeta.type,       inline: true },
-      { name: 'Opened by',  value: ticketMeta.creatorTag, inline: true },
-      { name: 'Closed by',  value: ticketMeta.closedBy,   inline: true },
-      { name: 'Messages',   value: `${messages.length}`,  inline: true },
+      { name: 'Type',       value: TYPE_LABELS[ticketMeta.type] || ticketMeta.type, inline: true },
+      { name: 'Opened by',  value: ticketMeta.creatorTag,                           inline: true },
+      { name: 'Closed by',  value: ticketMeta.closedBy,                             inline: true },
+      { name: 'Messages',   value: `${messages.length}`,                            inline: true },
+      ...(ticketMeta.closeReason ? [{ name: 'Close Reason', value: ticketMeta.closeReason, inline: false }] : []),
     )
     .setTimestamp();
 

@@ -23,6 +23,18 @@ function loadState() { try { return JSON.parse(fs_state.readFileSync(STATE_FILE,
 function saveState(s) { fs_state.writeFileSync(STATE_FILE, JSON.stringify(s, null, 2)); }
 function getCCOpen() { return loadState().ccAppsOpen !== false; } // default open
 
+// Per-type DM toggle — default on for all types
+function getDMToggle(type) {
+  const s = loadState();
+  return (s.dmToggles || {})[type] !== false;
+}
+function setDMToggle(type, enabled) {
+  const s = loadState();
+  if (!s.dmToggles) s.dmToggles = {};
+  s.dmToggles[type] = enabled;
+  saveState(s);
+}
+
 // Ticket type → log channel mapping
 function ticketLogChannel(type) {
   if (type === 'gr')     return cfg.GR_LOG_CHANNEL_ID;
@@ -785,15 +797,20 @@ async function handleCloseReason(interaction) {
 
   await interaction.update({ content: `Closing — **${reasonDef?.label || reasonKey}**...`, components: [] });
 
-  // DM the ticket creator with the specific reason message
-  if (creatorId && reasonDef?.dm && creatorId !== interaction.user.id) {
+  // DM the ticket creator — skipped if they closed it themselves or DMs are toggled off for this type
+  const dmEnabled = getDMToggle(ticketType);
+  if (dmEnabled && creatorId && reasonDef?.dm && creatorId !== interaction.user.id) {
     try {
       const user = await interaction.client.users.fetch(creatorId);
       await user.send({ embeds: [new EmbedBuilder()
         .setColor(0x5865F2)
         .setTitle('Ticket Closed — 1.8 Arena')
         .setDescription(reasonDef.dm)
-        .addFields({ name: 'Ticket', value: channel.name, inline: true })
+        .addFields(
+          { name: 'Ticket',       value: channel.name,       inline: true },
+          { name: 'Closed by',    value: interaction.user.tag, inline: true },
+          { name: 'Close Reason', value: reasonDef.label,     inline: false },
+        )
         .setFooter({ text: '1.8 Arena Support' })
         .setTimestamp()
       ]});
@@ -963,7 +980,7 @@ function _creatorFromTopic(channel) {
 }
 
 module.exports = {
-  getCCOpen, loadState, saveState,
+  getCCOpen, loadState, saveState, getDMToggle, setDMToggle,
   buildGameReportPanel,
   buildDiscordReportPanel,
   buildAppealPanel,

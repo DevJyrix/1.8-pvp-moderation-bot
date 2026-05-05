@@ -19,7 +19,7 @@ const {
   buildGameReportPanel, buildDiscordReportPanel, buildAppealPanel, buildOtherTicketsPanel,
   handleGameReport, handleDiscordReport, handleAppeal, handleCC, handleArt,
   submitGameReport, submitDiscordReport, submitAppeal, submitCC, submitArt,
-  closeTicket, handleCloseReason, getCCOpen, loadState, saveState,
+  closeTicket, handleCloseReason, getCCOpen, loadState, saveState, getDMToggle, setDMToggle,
 } = tickets;
 const { addInfraction, removeInfraction, clearWarnsAndNotes, buildFullInfractionEmbed } = require('./infractions');
 const { recordAction, buildStatsEmbed: buildModStatsEmbed, buildModStatsRow } = require('./modstats');
@@ -93,6 +93,30 @@ const slashDefs = [
     .setName('gamestats')
     .setDescription('Show game statistics (Admin only)')
     .setDefaultMemberPermissions(0),
+  new SlashCommandBuilder()
+    .setName('tickettoggle')
+    .setDescription('Toggle close-DM notifications for a ticket type (Senior Staff+)')
+    .setDefaultMemberPermissions(0)
+    .addStringOption(o => o
+      .setName('type')
+      .setDescription('Ticket type')
+      .setRequired(true)
+      .addChoices(
+        { name: 'Game Report',      value: 'gr'     },
+        { name: 'Discord Report',   value: 'dr'     },
+        { name: 'Appeal',           value: 'appeal' },
+        { name: 'Content Creator',  value: 'cc'     },
+      )
+    )
+    .addStringOption(o => o
+      .setName('dm')
+      .setDescription('Enable or disable DMs to the ticket creator when closed by staff')
+      .setRequired(true)
+      .addChoices(
+        { name: 'On',  value: 'on'  },
+        { name: 'Off', value: 'off' },
+      )
+    ),
   new SlashCommandBuilder()
     .setName('apps')
     .setDescription('Open or close applications (Admin only)')
@@ -1861,6 +1885,28 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await interaction.editReply({ embeds: [embed], components: [row] });
     } catch (e) { interaction.followUp({ content: `Error: ${e.message}`, flags: 64 }); }
     return;
+  }
+
+  // ── /tickettoggle ──────────────────────────────────────────────────────────
+  if (interaction.isChatInputCommand() && interaction.commandName === 'tickettoggle') {
+    if (!config.isSenior(interaction.member)) return interaction.reply({ content: 'Senior Staff+ only.', flags: 64 });
+    const type    = interaction.options.getString('type');
+    const enabled = interaction.options.getString('dm') === 'on';
+    setDMToggle(type, enabled);
+    const TYPE_NAMES = { gr: 'Game Report', dr: 'Discord Report', appeal: 'Appeal', cc: 'Content Creator' };
+    return interaction.reply({
+      embeds: [new EmbedBuilder()
+        .setColor(enabled ? 0x57F287 : 0xED4245)
+        .setTitle('Ticket DM Toggle Updated')
+        .addFields(
+          { name: 'Ticket Type', value: TYPE_NAMES[type] || type, inline: true },
+          { name: 'Close DMs',   value: enabled ? '**On** — creator will be DM\'d when staff close their ticket' : '**Off** — no DM sent on close', inline: false },
+        )
+        .setFooter({ text: 'Changed by ' + interaction.user.tag })
+        .setTimestamp()
+      ],
+      flags: 64,
+    });
   }
 
   // ── /apps slash command ────────────────────────────────────────────────────
