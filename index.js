@@ -1214,10 +1214,11 @@ async function executeGameBan(robloxUser, ruleCode, staffUser, reason, replyMsg,
   let restrictError = null;
   try {
     const ruleName = RULES[ruleCode]?.name || ruleCode;
+    const displayName = ruleCode === 'CUSTOM' ? 'Rule violation' : ruleName;
     await roblox.restrictUser(userId, {
       days, permanent,
       privateReason: `Rule ${ruleCode} — ${ruleName}. Banned by ${staffUser.tag}. ${reason}`.slice(0, 1000),
-      displayReason:  `Banned for Rule ${ruleCode} — ${ruleName}${permanent ? ' permanently' : ` for ${label}`}.`,
+      displayReason:  `Banned for ${displayName}${permanent ? ' permanently' : ` for ${label}`}.`,
     });
   } catch (e) {
     restrictError = e;
@@ -1250,7 +1251,7 @@ async function executeGameBan(robloxUser, ruleCode, staffUser, reason, replyMsg,
   await roblox.publishMessage('ModAction', {
     action: 'ban',
     userId: String(userId),
-    reason: `Rule ${ruleCode} — ${RULES[ruleCode]?.name || 'Custom'}. ${reason}`,
+    reason: `${ruleCode === 'CUSTOM' ? 'Rule violation' : (RULES[ruleCode]?.name || ruleCode)}: ${reason}`,
     duration: permanent ? 'Permanent' : label,
   });
 }

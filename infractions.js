@@ -168,7 +168,9 @@ async function buildFullInfractionEmbed(discordUserId, robloxUsernameOrId, clien
       const ts  = Math.floor(new Date(b.bannedAt).getTime() / 1000);
       const dur = b.permanent ? 'Permanent' : b.duration;
       const app = b.appealedBy ? ` — Appealed by \`${b.appealedBy}\`` : '';
-      return `${i + 1}. Rule ${b.rule} — ${dur} — \`${b.bannedBy || '?'}\` — <t:${ts}:d>${app}`;
+      const ruleName = RULES[b.rule]?.name;
+      const ruleLabel = ruleName ? `${b.rule} (${ruleName})` : b.rule;
+      return `${i + 1}. ${ruleLabel} — ${dur} — \`${b.bannedBy || '?'}\` — <t:${ts}:d>${app}`;
     });
     embed.addFields({ name: `Game Bans (${gameHistory.length})`, value: lines.join('\n') });
 
