@@ -5,7 +5,7 @@
  *   #game-reports       → "Report Player" button → gr-nickname
  *   #discord-reports    → "Report User" button   → dr-nickname
  *   #appeals            → "Appeal" button        → appeal-nickname
- *   #other-tickets      → dropdown: Art / CC App → cc-nickname / art-nickname
+ *   #other-tickets      → dropdown: CC App / Game Staff App / Discord Staff App
  *
  * Channel names always use the server nickname (RoVer-linked Roblox username).
  */
@@ -149,6 +149,112 @@ function dupCheck(guild, creatorId, prefix) {
   );
 }
 
+// ── Close reasons per ticket type ─────────────────────────────────────────────
+// dm: message sent to the ticket creator when staff closes with this reason.
+// If creator closes their own ticket, no DM is sent regardless.
+const CLOSE_REASONS = {
+  gr: [
+    {
+      value: 'insufficient_proof',
+      label: 'Insufficient Proof',
+      dm: 'Your game report has been reviewed. Unfortunately, the evidence provided was insufficient to take action against the reported player. If you gather additional evidence in the future, feel free to submit a new report.',
+    },
+    {
+      value: 'player_banned',
+      label: 'Report Handled — Player Banned',
+      dm: 'Your game report has been reviewed and the reported player was found to be in violation of the rules. They have been actioned accordingly. Thank you for helping keep the game fair!',
+    },
+    {
+      value: 'no_action',
+      label: 'Report Handled — No Action Taken',
+      dm: 'Your game report has been reviewed by our staff team. After investigation, no action was taken at this time.',
+    },
+    {
+      value: 'false_report',
+      label: 'False / Spam Report',
+      dm: 'Your game report was closed. Please only submit reports that are genuine and supported by valid evidence. Repeated false reports may result in a punishment.',
+    },
+  ],
+  dr: [
+    {
+      value: 'insufficient_proof',
+      label: 'Insufficient Proof',
+      dm: 'Your Discord report has been reviewed. The evidence provided was insufficient to take action against the reported user. If you have more evidence, feel free to submit a new report.',
+    },
+    {
+      value: 'action_taken',
+      label: 'Report Handled — Action Taken',
+      dm: 'Your Discord report has been reviewed. The reported user has been actioned for violating our community rules. Thank you for helping keep the server safe!',
+    },
+    {
+      value: 'not_violation',
+      label: 'Not a Rule Violation',
+      dm: 'Your Discord report has been reviewed. After investigation, the reported behaviour was not found to be a rule violation.',
+    },
+    {
+      value: 'false_report',
+      label: 'False / Spam Report',
+      dm: 'Your Discord report was closed as a false or spam report. Please only submit genuine reports.',
+    },
+  ],
+  appeal: [
+    {
+      value: 'accepted',
+      label: 'Appeal Accepted — Ban Removed',
+      dm: 'Your ban appeal has been reviewed and **accepted**. Your game ban has been lifted. Please ensure you follow our rules going forward to avoid future punishments.',
+    },
+    {
+      value: 'denied',
+      label: 'Appeal Denied — Ban Stands',
+      dm: 'Your ban appeal has been reviewed and **denied**. Your ban will remain in place. If you have new information, you may resubmit an appeal after 30 days.',
+    },
+    {
+      value: 'insufficient_info',
+      label: 'Insufficient Information',
+      dm: 'Your ban appeal was closed due to insufficient information provided. Please resubmit your appeal with more detail about your situation.',
+    },
+    {
+      value: 'ban_evasion',
+      label: 'Ban Evasion — Rejected',
+      dm: 'Your ban appeal has been rejected. Evidence of ban evasion was detected, which may result in an extended or permanent ban.',
+    },
+  ],
+  cc: [
+    {
+      value: 'accepted',
+      label: 'Accepted — CC Role Granted',
+      dm: 'Congratulations! Your Content Creator application has been **accepted**. You will receive the Content Creator role shortly. Welcome to the team!',
+    },
+    {
+      value: 'denied_requirements',
+      label: 'Denied — Requirements Not Met',
+      dm: 'Thank you for applying for Content Creator. Unfortunately your application did not meet our current requirements. Feel free to apply again once you qualify!',
+    },
+    {
+      value: 'denied_quality',
+      label: 'Denied — Content Quality',
+      dm: 'Thank you for applying for Content Creator. After review, your content did not meet our quality standards at this time. Keep creating and feel free to apply again in the future!',
+    },
+  ],
+  default: [
+    {
+      value: 'resolved',
+      label: 'Resolved',
+      dm: 'Your ticket has been resolved by our staff team. If you have any further questions, feel free to open a new ticket.',
+    },
+    {
+      value: 'no_action',
+      label: 'No Action Needed',
+      dm: 'Your ticket has been reviewed. No action was required at this time.',
+    },
+    {
+      value: 'duplicate',
+      label: 'Duplicate Ticket',
+      dm: 'Your ticket was closed as a duplicate. Please check if you already have an open ticket for the same issue.',
+    },
+  ],
+};
+
 // ──────────────────────────────────────────────────────────────────────────────
 // PANEL BUILDERS — one per channel
 // ──────────────────────────────────────────────────────────────────────────────
@@ -252,16 +358,22 @@ function buildOtherTicketsPanel() {
       .setPlaceholder('Select a category...')
       .addOptions([
         {
-          label: 'Art — Request Fanart Posting',
-          description: 'Request to have your fanart posted',
-          value: 'art',
-          emoji: '🎨',
-        },
-        {
           label: 'Content Creator Application',
           description: 'Apply for the Content Creator role',
           value: 'cc',
           emoji: '🎬',
+        },
+        {
+          label: 'Game Staff Application',
+          description: 'Apply to join the in-game moderation team',
+          value: 'staff_game',
+          emoji: '⚔️',
+        },
+        {
+          label: 'Discord Staff Application',
+          description: 'Apply to join the Discord moderation team',
+          value: 'staff_discord',
+          emoji: '💬',
         },
       ])
   );
@@ -339,7 +451,6 @@ async function submitGameReport(interaction) {
   // Auto-lookup reported player
   await _reportLookup(channel, reported);
 
-  recordAction(interaction.user.id, 'TICKET_CLOSED', `#${channel.name}`);
   await interaction.editReply({ content: `Report created: <#${channel.id}>` });
 }
 
@@ -401,7 +512,6 @@ async function handleAppeal(interaction) {
   const member = interaction.member;
   const nick   = getSafeNick(member);
 
-  // Only allow appeals for yourself — check that they provide their own Roblox name
   const dup = dupCheck(interaction.guild, interaction.user.id, 'appeal-');
   if (dup) return interaction.reply({ content: `You already have an open appeal: <#${dup.id}>`, flags: 64 });
 
@@ -425,11 +535,9 @@ async function submitAppeal(interaction) {
   const member         = interaction.member;
   const nick           = getSafeNick(member);
 
-  // Verify: the Roblox username they provide should match their server nickname
   const nickBase = (member.nickname || '').split(/[\s(]/)[0].trim().toLowerCase();
   const isVerified = nickBase.length > 0 && nickBase === robloxUsername.toLowerCase();
 
-  // If nickname doesn't match, block them
   if (!isVerified && member.nickname) {
     return interaction.reply({
       content: `You can only appeal for your own account. Your server nickname shows **${member.nickname}** — please enter the correct Roblox username.`,
@@ -508,7 +616,6 @@ async function submitCC(interaction) {
 
   await interaction.deferReply({ flags: 64 });
 
-  // Pre-check views if API key is configured
   if (cfg.YOUTUBE_API_KEY) {
     try {
       const videoInfo = await yt.getVideoInfo(videoId);
@@ -524,7 +631,6 @@ async function submitCC(interaction) {
       }
     } catch (e) {
       console.error('[CC] YouTube pre-check failed:', e.message);
-      // Don't block application if API fails — staff will verify manually
     }
   }
 
@@ -547,58 +653,17 @@ async function submitCC(interaction) {
     new ButtonBuilder().setCustomId('ticket_close').setLabel('Close Ticket').setStyle(ButtonStyle.Danger)
   );
   saveTicketMeta(channel.id, { type: 'cc', creatorId: interaction.user.id, creatorTag: interaction.user.tag, openedAt: new Date().toISOString(), channelId: channel.id });
-  // Ping senior staff only — do NOT ping admin in CC tickets
   await channel.send({ content: `<@${interaction.user.id}> ${staffPing(interaction.guild, 3, 3)}`, embeds: [embed], components: [closeRow] });
   await _ccLookup(channel, channelLink, videoLink);
   await interaction.editReply({ content: `Application submitted: <#${channel.id}>` });
 }
 
-// Art Request
+// Art ticket — temporarily disabled; functions kept for future re-enablement
 async function handleArt(interaction) {
-  const dup = dupCheck(interaction.guild, interaction.user.id, 'art-');
-  if (dup) return interaction.reply({ content: `You already have an open art request: <#${dup.id}>`, flags: 64 });
-
-  const modal = new ModalBuilder().setCustomId('modal_art').setTitle('Fanart Posting Request');
-  modal.addComponents(
-    new ActionRowBuilder().addComponents(
-      new TextInputBuilder().setCustomId('art_link').setLabel('Link to your artwork')
-        .setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(300)
-        .setPlaceholder('Direct image link or Imgur/etc.')
-    ),
-    new ActionRowBuilder().addComponents(
-      new TextInputBuilder().setCustomId('description').setLabel('Brief description of the artwork')
-        .setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(500)
-    ),
-  );
-  return interaction.showModal(modal);
+  return interaction.reply({ content: 'Art submissions are temporarily unavailable. Please check back later.', flags: 64 });
 }
-
 async function submitArt(interaction) {
-  const artLink     = interaction.fields.getTextInputValue('art_link').trim();
-  const description = interaction.fields.getTextInputValue('description').trim();
-  const nick        = getSafeNick(interaction.member);
-
-  await interaction.deferReply({ flags: 64 });
-  const artCatId = cfg.ADMIN_TICKET_CATEGORY_ID || cfg.TICKET_CATEGORY_ID;
-  const channel = await createChannel(
-    interaction.guild, `art-${nick}`, artCatId, interaction.user.id
-  ).catch(async e => { await interaction.editReply(`Failed: ${e.message}`); return null; });
-  if (!channel) return;
-
-  const embed = new EmbedBuilder().setColor(0x5865F2).setTitle('Fanart Posting Request')
-    .addFields(
-      { name: 'Submitted by', value: `<@${interaction.user.id}>`, inline: true },
-      { name: 'Artwork Link', value: artLink,                      inline: false },
-      { name: 'Description',  value: description,                  inline: false },
-    )
-    .setFooter({ text: 'Use /close or the button below to close' });
-
-  const closeRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('ticket_close').setLabel('Close Ticket').setStyle(ButtonStyle.Danger)
-  );
-  saveTicketMeta(channel.id, { type: 'art', creatorId: interaction.user.id, creatorTag: interaction.user.tag, openedAt: new Date().toISOString(), channelId: channel.id });
-  await channel.send({ content: `<@${interaction.user.id}> ${staffPing(interaction.guild, categoryLevel(artCatId))}`, embeds: [embed], components: [closeRow] });
-  await interaction.editReply({ content: `Request submitted: <#${channel.id}>` });
+  return interaction.reply({ content: 'Art submissions are temporarily unavailable.', flags: 64 });
 }
 
 // ── CC YouTube lookup ──────────────────────────────────────────────────────────
@@ -619,7 +684,6 @@ async function _ccLookup(channel, channelLink, videoLink) {
     const videoInfo = await yt.getVideoInfo(videoId);
     if (!videoInfo) return loadMsg.edit('Could not fetch video info — staff please verify manually.');
 
-    // Prefer the provided channel URL; fall back to the video's channel ID
     let channelInfo = await yt.getChannelByUrl(channelLink).catch(() => null);
     if (!channelInfo) channelInfo = await yt.getChannelById(videoInfo.channelId).catch(() => null);
 
@@ -662,43 +726,96 @@ async function _ccLookup(channel, channelLink, videoLink) {
   }
 }
 
-// ── Close ──────────────────────────────────────────────────────────────────────
+// ── Close ticket (with reason) ─────────────────────────────────────────────────
 async function closeTicket(interaction, channel) {
   if (!channel) channel = interaction.channel;
-  const validNames = ['gr-', 'dr-', 'appeal-', 'cc-', 'art-'];
-  if (!validNames.some(p => channel.name.startsWith(p))) {
+  const validPrefixes = ['gr-', 'dr-', 'appeal-', 'cc-', 'art-'];
+  if (!validPrefixes.some(p => channel.name.startsWith(p))) {
     return interaction.reply({ content: 'This command can only be used inside a ticket channel.', flags: 64 });
   }
 
   const meta      = loadTicketMeta(channel.id);
   const creatorId = meta?.creatorId || _creatorFromTopic(channel);
-  const canClose  = cfg.isStaff(interaction.member) || (creatorId && interaction.user.id === creatorId);
-  if (!canClose) return interaction.reply({ content: 'Only the ticket creator or staff can close this.', flags: 64 });
+  const isStaff   = cfg.isStaff(interaction.member);
+  const isCreator = creatorId && interaction.user.id === creatorId;
 
-  await interaction.reply({ content: 'Saving transcript and closing...' });
+  if (!isStaff && !isCreator) {
+    return interaction.reply({ content: 'Only the ticket creator or staff can close this.', flags: 64 });
+  }
 
-  const ticketMeta = {
-    ...(meta || {}),
-    number:     meta?.number || '?',
-    type:       meta?.type   || channel.name.split('-')[0],
-    creatorTag: meta?.creatorTag || 'Unknown',
-    creatorId,
-    openedAt:   meta?.openedAt || channel.createdAt?.toISOString() || new Date().toISOString(),
-    closedBy:   interaction.user.tag,
-  };
+  // Creator closing their own ticket — no reason prompt, no DM to self
+  if (!isStaff) {
+    await interaction.reply({ content: 'Closing your ticket...' });
+    recordAction(interaction.user.id, 'TICKET_CLOSED', `#${channel.name}`);
+    return _doClose(interaction.client, channel, meta, creatorId, interaction.user.tag);
+  }
 
-  recordAction(interaction.user.id, 'TICKET_CLOSED', `#${channel.name}`);
+  // Staff closing — show ticket-type-specific reason dropdown
+  const ticketType = meta?.type || channel.name.split('-')[0];
+  const reasons    = CLOSE_REASONS[ticketType] || CLOSE_REASONS.default;
 
-  try { await generateAndPostTranscript(interaction.client, channel, ticketMeta, ticketLogChannel(ticketMeta.type)); } catch {}
+  const menu = new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId(`ticket_close_reason_${channel.id}`)
+      .setPlaceholder('Select a close reason...')
+      .addOptions(reasons.map(r => ({ label: r.label, value: r.value })))
+  );
 
-  if (creatorId) {
+  return interaction.reply({
+    content: 'Select a reason for closing this ticket:',
+    components: [menu],
+    flags: 64,
+  });
+}
+
+// Called when staff picks a reason from the close dropdown
+async function handleCloseReason(interaction) {
+  const channelId  = interaction.customId.replace('ticket_close_reason_', '');
+  const channel    = interaction.channel?.id === channelId
+    ? interaction.channel
+    : await interaction.client.channels.fetch(channelId).catch(() => null);
+  if (!channel) return interaction.update({ content: 'Channel not found.', components: [] });
+
+  const reasonKey  = interaction.values[0];
+  const meta       = loadTicketMeta(channel.id);
+  const creatorId  = meta?.creatorId || _creatorFromTopic(channel);
+  const ticketType = meta?.type || channel.name.split('-')[0];
+  const reasons    = CLOSE_REASONS[ticketType] || CLOSE_REASONS.default;
+  const reasonDef  = reasons.find(r => r.value === reasonKey);
+
+  await interaction.update({ content: `Closing — **${reasonDef?.label || reasonKey}**...`, components: [] });
+
+  // DM the ticket creator with the specific reason message
+  if (creatorId && reasonDef?.dm && creatorId !== interaction.user.id) {
     try {
       const user = await interaction.client.users.fetch(creatorId);
-      await user.send({ embeds: [new EmbedBuilder().setColor(0x5865F2).setTitle('Ticket Resolved')
-        .setDescription(`Your ticket **${channel.name}** has been resolved and closed.`).setTimestamp()] });
+      await user.send({ embeds: [new EmbedBuilder()
+        .setColor(0x5865F2)
+        .setTitle('Ticket Closed — 1.8 Arena')
+        .setDescription(reasonDef.dm)
+        .addFields({ name: 'Ticket', value: channel.name, inline: true })
+        .setFooter({ text: '1.8 Arena Support' })
+        .setTimestamp()
+      ]});
     } catch {}
   }
 
+  recordAction(interaction.user.id, 'TICKET_CLOSED', `#${channel.name}`);
+  await _doClose(interaction.client, channel, meta, creatorId, interaction.user.tag, reasonDef?.label);
+}
+
+// Shared ticket teardown — generates transcript then deletes channel
+async function _doClose(client, channel, meta, creatorId, closedByTag, reason = null) {
+  const ticketMeta = {
+    ...(meta || {}),
+    type:       meta?.type || channel.name.split('-')[0],
+    creatorTag: meta?.creatorTag || 'Unknown',
+    creatorId,
+    openedAt:   meta?.openedAt || channel.createdAt?.toISOString() || new Date().toISOString(),
+    closedBy:   closedByTag,
+    ...(reason ? { closeReason: reason } : {}),
+  };
+  try { await generateAndPostTranscript(client, channel, ticketMeta, ticketLogChannel(ticketMeta.type)); } catch {}
   deleteTicketMeta(channel.id);
   setTimeout(async () => { try { await channel.delete('Ticket closed'); } catch {} }, 4000);
 }
@@ -718,7 +835,6 @@ async function _appealLookup(channel, robloxUsername, creator, identityVerified)
       roblox.getUserRestriction(user.id).catch(() => null),
     ]);
 
-    // Platform restriction takes priority; DataStore is fallback
     const platformBan = restriction?.gameJoinRestriction?.active ? restriction.gameJoinRestriction : null;
     const activeBan   = banData?.active && isActiveBan(banData.active) ? banData.active : null;
     const isBanned    = !!(platformBan || activeBan);
@@ -740,7 +856,6 @@ async function _appealLookup(channel, robloxUsername, creator, identityVerified)
       );
 
     if (platformBan) {
-      // Duration parsing: "604800s" → human readable
       const durSecs  = platformBan.duration ? parseInt(platformBan.duration) : null;
       const startTs  = platformBan.startTime ? Math.floor(new Date(platformBan.startTime).getTime() / 1000) : null;
       const expireTs = durSecs && startTs ? startTs + durSecs : null;
@@ -864,4 +979,5 @@ module.exports = {
   submitCC,
   submitArt,
   closeTicket,
+  handleCloseReason,
 };

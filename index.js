@@ -19,7 +19,7 @@ const {
   buildGameReportPanel, buildDiscordReportPanel, buildAppealPanel, buildOtherTicketsPanel,
   handleGameReport, handleDiscordReport, handleAppeal, handleCC, handleArt,
   submitGameReport, submitDiscordReport, submitAppeal, submitCC, submitArt,
-  closeTicket, getCCOpen, loadState, saveState,
+  closeTicket, handleCloseReason, getCCOpen, loadState, saveState,
 } = tickets;
 const { addInfraction, removeInfraction, clearWarnsAndNotes, buildFullInfractionEmbed } = require('./infractions');
 const { recordAction, buildStatsEmbed: buildModStatsEmbed, buildModStatsRow } = require('./modstats');
@@ -1593,9 +1593,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
   // Other tickets dropdown
   if (interaction.isStringSelectMenu() && interaction.customId === 'ticket_other_select') {
     const val = interaction.values[0];
-    if (val === 'cc')  return handleCC(interaction);
-    if (val === 'art') return handleArt(interaction);
+    if (val === 'cc')             return handleCC(interaction);
+    if (val === 'staff_game')     return apps.showAppModal(interaction, 'game_staff');
+    if (val === 'staff_discord')  return apps.showAppModal(interaction, 'discord_staff');
     return;
+  }
+
+  // Ticket close reason select menu
+  if (interaction.isStringSelectMenu() && interaction.customId.startsWith('ticket_close_reason_')) {
+    return handleCloseReason(interaction);
   }
 
   // Ticket modal submits

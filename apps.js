@@ -115,8 +115,13 @@ async function refreshPanel(client) {
 
 async function handleAppButton(interaction) {
   const appType = interaction.customId.replace('app_open_', '');
+  return showAppModal(interaction, appType);
+}
+
+// Can also be called directly (e.g. from a select menu) with the appType string
+async function showAppModal(interaction, appType) {
   const def = APP_TYPES[appType];
-  if (!def) return;
+  if (!def) return interaction.reply({ content: 'Unknown application type.', flags: 64 });
 
   if (!appsOpen) {
     return interaction.reply({ content: 'Applications are currently closed.', flags: 64 });
@@ -391,6 +396,6 @@ function getAppsOpen()      { return appsOpen; }
 module.exports = {
   APP_TYPES,
   buildAppPanel, postPanel, refreshPanel,
-  handleAppButton, handleAppModal, handleAppAccept, handleAppDeny, handleCloseAppTicket,
+  handleAppButton, showAppModal, handleAppModal, handleAppAccept, handleAppDeny, handleCloseAppTicket,
   setAppsOpen, getAppsOpen,
 };
