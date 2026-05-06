@@ -1982,4 +1982,7 @@ function parseGameDuration(s) {
   return { days, label: `${n} ${unit}`, permanent: false };
 }
 
+client.on('error', err => console.error('[Discord Client Error]', err));
+process.on('unhandledRejection', (reason) => console.error('[Unhandled Rejection]', reason));
+
 client.login(config.DISCORD_TOKEN);

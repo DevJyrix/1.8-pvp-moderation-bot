@@ -21,8 +21,8 @@ const APP_TYPES = {
       { id: 'age',      label: 'How old are you?',                                       style: TextInputStyle.Short,     max: 20  },
       { id: 'playtime', label: 'How long have you played 1.8 Arena?',                    style: TextInputStyle.Short,     max: 100 },
       { id: 'why',      label: 'Why do you want to be a Game Tester?',                   style: TextInputStyle.Paragraph, max: 500 },
-      { id: 'hours',    label: 'How many hours/week can you commit to testing?',          style: TextInputStyle.Short,     max: 50  },
-      { id: 'exp',      label: 'Any previous testing or bug reporting experience?',      style: TextInputStyle.Paragraph, max: 500 },
+      { id: 'hours',    label: 'Hours/week you can commit to testing?',                   style: TextInputStyle.Short,     max: 50  },
+      { id: 'exp',      label: 'Testing or bug reporting experience?',                  style: TextInputStyle.Paragraph, max: 500 },
     ],
   },
   discord_staff: {
@@ -35,8 +35,8 @@ const APP_TYPES = {
       { id: 'age',    label: 'How old are you?',                                         style: TextInputStyle.Short,     max: 20  },
       { id: 'time',   label: 'How long have you been in this server?',                   style: TextInputStyle.Short,     max: 100 },
       { id: 'why',    label: 'Why do you want to be Discord Staff?',                     style: TextInputStyle.Paragraph, max: 500 },
-      { id: 'exp',    label: 'Previous Discord moderation experience? Describe.',        style: TextInputStyle.Paragraph, max: 500 },
-      { id: 'tz',     label: 'Timezone and how many hours/day are you active?',          style: TextInputStyle.Short,     max: 100 },
+      { id: 'exp',    label: 'Prior Discord moderation experience?',                     style: TextInputStyle.Paragraph, max: 500 },
+      { id: 'tz',     label: 'Timezone & daily active hours?',                          style: TextInputStyle.Short,     max: 100 },
     ],
   },
   game_staff: {
