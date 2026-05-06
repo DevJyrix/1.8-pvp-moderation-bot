@@ -251,6 +251,13 @@ async function publishMessage(topic, data) {
   }
 }
 
+// ── Group API ──────────────────────────────────────────────────────────────────
+
+async function getGroupInfo(groupId) {
+  const res = await axios.get(`https://groups.roblox.com/v1/groups/${groupId}`);
+  return { name: res.data.name, memberCount: res.data.memberCount };
+}
+
 // ── Formatters ─────────────────────────────────────────────────────────────────
 
 function formatPlaytime(seconds) {
@@ -264,5 +271,5 @@ module.exports = {
   getUserByName, getUserById, getAvatar,
   getPlayerStats, savePlayerStats, getBanData, saveBanData,
   restrictUser, unrestrictUser, getUserRestriction,
-  formatPlaytime, dsGet, dsSet, publishMessage,
+  formatPlaytime, dsGet, dsSet, publishMessage, getGroupInfo,
 };

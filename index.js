@@ -118,6 +118,10 @@ const slashDefs = [
       )
     ),
   new SlashCommandBuilder()
+    .setName('groupstats')
+    .setDescription('Check Roblox group member count and growth (Admin only)')
+    .setDefaultMemberPermissions(0),
+  new SlashCommandBuilder()
     .setName('apps')
     .setDescription('Open or close applications (Admin only)')
     .setDefaultMemberPermissions(0)
@@ -1907,6 +1911,66 @@ client.on(Events.InteractionCreate, async (interaction) => {
       ],
       flags: 64,
     });
+  }
+
+  // ── /groupstats ────────────────────────────────────────────────────────────
+  if (interaction.isChatInputCommand() && interaction.commandName === 'groupstats') {
+    if (!config.isAdmin(interaction.member)) return interaction.reply({ content: 'Admin only.', flags: 64 });
+    await interaction.deferReply({ flags: 64 });
+
+    const GROUP_ID = 776529291;
+    try {
+      const { name, memberCount } = await roblox.getGroupInfo(GROUP_ID);
+      const now   = new Date().toISOString();
+      const state = loadState();
+      const snap  = state.groupSnapshot || {};
+      const last  = snap.last  || null;
+      const first = snap.first || null;
+
+      snap.last = { count: memberCount, timestamp: now };
+      if (!snap.first) snap.first = { count: memberCount, timestamp: now };
+      state.groupSnapshot = snap;
+      saveState(state);
+
+      const fmt = n => (n >= 0 ? '+' : '') + n.toLocaleString();
+
+      const embed = new EmbedBuilder()
+        .setColor(0x5865F2)
+        .setTitle(`${name} — Group Stats`)
+        .setURL(`https://www.roblox.com/groups/${GROUP_ID}`)
+        .addFields({ name: 'Members', value: memberCount.toLocaleString(), inline: true });
+
+      if (last) {
+        const growth   = memberCount - last.count;
+        const msAgo    = Date.now() - new Date(last.timestamp).getTime();
+        const daysAgo  = msAgo / 86400000;
+        const avgDaily = daysAgo > 0 ? (growth / daysAgo).toFixed(1) : '—';
+        embed.addFields(
+          { name: 'Since Last Fetch', value: fmt(growth),                                                         inline: true },
+          { name: 'Last Fetched',     value: `<t:${Math.floor(new Date(last.timestamp).getTime()/1000)}:R>`,     inline: true },
+          { name: 'Avg Daily (since last fetch)', value: `${avgDaily}/day`,                                      inline: true },
+        );
+      } else {
+        embed.addFields({ name: 'Growth', value: 'No previous snapshot — run again later to see growth.' });
+      }
+
+      if (first && first.timestamp !== snap.last.timestamp) {
+        const totalGrowth = memberCount - first.count;
+        const msTotal     = Date.now() - new Date(first.timestamp).getTime();
+        const daysTotal   = msTotal / 86400000;
+        const avgTotal    = daysTotal > 0 ? (totalGrowth / daysTotal).toFixed(1) : '—';
+        embed.addFields(
+          { name: 'Total Growth (tracked)', value: fmt(totalGrowth),                                               inline: true },
+          { name: 'Avg Daily (all-time)',    value: `${avgTotal}/day`,                                             inline: true },
+          { name: 'Tracking Since',          value: `<t:${Math.floor(new Date(first.timestamp).getTime()/1000)}:D>`, inline: true },
+        );
+      }
+
+      embed.setTimestamp().setFooter({ text: `Group ID: ${GROUP_ID}` });
+      return interaction.editReply({ embeds: [embed] });
+    } catch (e) {
+      return interaction.editReply({ content: `Failed to fetch group stats: ${e.message}` });
+    }
   }
 
   // ── /apps slash command ────────────────────────────────────────────────────
