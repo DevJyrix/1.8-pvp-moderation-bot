@@ -1932,7 +1932,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
       state.groupSnapshot = snap;
       saveState(state);
 
-      const fmt = n => (n >= 0 ? '+' : '') + n.toLocaleString();
+      const fmtDelta = n => (n >= 0 ? '+' : '') + n.toLocaleString();
+
+      // Returns a Discord timestamp for when `target` members will be reached
+      // given a rate of `perMs` members/ms. Returns '—' if rate <= 0 or already passed.
+      function eta(current, target, perMs) {
+        if (current >= target) return '✅ Already reached';
+        if (perMs <= 0) return '—';
+        const msLeft = (target - current) / perMs;
+        return `<t:${Math.floor((Date.now() + msLeft) / 1000)}:R>`;
+      }
 
       const embed = new EmbedBuilder()
         .setColor(0x5865F2)
@@ -1941,14 +1950,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
         .addFields({ name: 'Members', value: memberCount.toLocaleString(), inline: true });
 
       if (last) {
-        const growth   = memberCount - last.count;
-        const msAgo    = Date.now() - new Date(last.timestamp).getTime();
-        const daysAgo  = msAgo / 86400000;
-        const avgDaily = daysAgo > 0 ? (growth / daysAgo).toFixed(1) : '—';
+        const growth  = memberCount - last.count;
+        const msAgo   = Date.now() - new Date(last.timestamp).getTime();
+        const perMs   = msAgo > 0 ? growth / msAgo : 0;
+        const perHour = perMs * 3600000;
+        const perDay  = perMs * 86400000;
+
         embed.addFields(
-          { name: 'Since Last Fetch', value: fmt(growth),                                                         inline: true },
-          { name: 'Last Fetched',     value: `<t:${Math.floor(new Date(last.timestamp).getTime()/1000)}:R>`,     inline: true },
-          { name: 'Avg Daily (since last fetch)', value: `${avgDaily}/day`,                                      inline: true },
+          { name: 'Since Last Fetch', value: fmtDelta(growth),                                                      inline: true },
+          { name: 'Last Fetched',     value: `<t:${Math.floor(new Date(last.timestamp).getTime()/1000)}:R>`,        inline: true },
+          { name: '​',           value: '​',                                                               inline: true },
+          { name: 'Avg / Hour',       value: `${fmtDelta(Math.round(perHour))}/hr`,                                 inline: true },
+          { name: 'Avg / Day',        value: `${fmtDelta(Math.round(perDay))}/day`,                                 inline: true },
+          { name: '​',           value: '​',                                                               inline: true },
+          { name: 'ETA — 100k',       value: eta(memberCount, 100_000,   perMs),                                    inline: true },
+          { name: 'ETA — 1M',         value: eta(memberCount, 1_000_000, perMs),                                    inline: true },
+          { name: '​',           value: '​',                                                               inline: true },
         );
       } else {
         embed.addFields({ name: 'Growth', value: 'No previous snapshot — run again later to see growth.' });
@@ -1957,16 +1974,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (first && first.timestamp !== snap.last.timestamp) {
         const totalGrowth = memberCount - first.count;
         const msTotal     = Date.now() - new Date(first.timestamp).getTime();
-        const daysTotal   = msTotal / 86400000;
-        const avgTotal    = daysTotal > 0 ? (totalGrowth / daysTotal).toFixed(1) : '—';
+        const avgDay      = msTotal > 0 ? ((totalGrowth / msTotal) * 86400000).toFixed(1) : '—';
         embed.addFields(
-          { name: 'Total Growth (tracked)', value: fmt(totalGrowth),                                               inline: true },
-          { name: 'Avg Daily (all-time)',    value: `${avgTotal}/day`,                                             inline: true },
-          { name: 'Tracking Since',          value: `<t:${Math.floor(new Date(first.timestamp).getTime()/1000)}:D>`, inline: true },
+          { name: 'Total Growth (tracked)', value: fmtDelta(totalGrowth),                                                inline: true },
+          { name: 'Avg Daily (all-time)',    value: `${avgDay}/day`,                                                     inline: true },
+          { name: 'Tracking Since',          value: `<t:${Math.floor(new Date(first.timestamp).getTime()/1000)}:D>`,    inline: true },
         );
       }
 
-      embed.setTimestamp().setFooter({ text: `Group ID: ${GROUP_ID}` });
+      embed.setTimestamp().setFooter({ text: `Group ID: ${GROUP_ID} • ETAs based on growth since last fetch` });
       return interaction.editReply({ embeds: [embed] });
     } catch (e) {
       return interaction.editReply({ content: `Failed to fetch group stats: ${e.message}` });
