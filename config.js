@@ -57,6 +57,8 @@ module.exports = {
   // Fallback for anything else
   MOD_LOG_CHANNEL_ID:         process.env.MOD_LOG_CHANNEL_ID,
   STATS_LOG_CHANNEL_ID:       process.env.STATS_LOG_CHANNEL_ID || process.env.MOD_LOG_CHANNEL_ID,
+  // Suggestions forum
+  SUGGESTIONS_CHANNEL_ID:     '1490848232031654030',
   // Applications
   APP_CHANNEL_ID:             '1500623487738450010',
   APP_LOG_CHANNEL_ID:         '1500623669825896578',

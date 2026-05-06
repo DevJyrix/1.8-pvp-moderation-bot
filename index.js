@@ -35,7 +35,7 @@ const client = new Client({
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.DirectMessages,
     GatewayIntentBits.GuildVoiceStates,
-    GatewayIntentBits.GuildVoiceStates,
+    GatewayIntentBits.GuildMessageReactions,
   ],
 });
 
@@ -120,6 +120,10 @@ const slashDefs = [
   new SlashCommandBuilder()
     .setName('groupstats')
     .setDescription('Check Roblox group member count and growth (Admin only)')
+    .setDefaultMemberPermissions(0),
+  new SlashCommandBuilder()
+    .setName('suggestions')
+    .setDescription('Show the top voted suggestions (Admin only)')
     .setDefaultMemberPermissions(0),
   new SlashCommandBuilder()
     .setName('apps')
@@ -1989,6 +1993,58 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
   }
 
+  // ── /suggestions ──────────────────────────────────────────────────────────
+  if (interaction.isChatInputCommand() && interaction.commandName === 'suggestions') {
+    if (!config.isAdmin(interaction.member)) {
+      return interaction.reply({ content: 'Admin only.', flags: 64 });
+    }
+    await interaction.deferReply({ flags: 64 });
+    try {
+      const forum = await client.channels.fetch(config.SUGGESTIONS_CHANNEL_ID).catch(() => null);
+      if (!forum) return interaction.editReply('Suggestions channel not found. Check SUGGESTIONS_CHANNEL_ID.');
+
+      const { threads: active }   = await forum.threads.fetchActive();
+      const { threads: archived } = await forum.threads.fetchArchived({ limit: 50, fetchAll: false });
+      const allThreads = [...active.values(), ...archived.values()];
+
+      if (!allThreads.length) return interaction.editReply('No suggestion posts found.');
+
+      const scored = [];
+      for (const thread of allThreads) {
+        try {
+          const msg = await thread.fetchStarterMessage().catch(() => null);
+          if (!msg) continue;
+          const up   = msg.reactions.cache.get('👍')?.count ?? 0;
+          const down = msg.reactions.cache.get('👎')?.count ?? 0;
+          scored.push({ thread, url: msg.url, up, down, score: up - down });
+        } catch {}
+      }
+
+      if (!scored.length) return interaction.editReply('Could not read reactions on any posts.');
+
+      scored.sort((a, b) => b.score - a.score);
+      const top = scored.slice(0, 15);
+
+      const lines = top.map((s, i) => {
+        const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+        const name  = s.thread.name.length > 60 ? s.thread.name.slice(0, 57) + '…' : s.thread.name;
+        return `${medal} [${name}](${s.url}) — 👍 **${s.up}** / 👎 **${s.down}**`;
+      });
+
+      const embed = new EmbedBuilder()
+        .setColor(0xFEE75C)
+        .setTitle('Top Suggestions')
+        .setDescription(lines.join('\n'))
+        .setFooter({ text: `${scored.length} total suggestions scanned` })
+        .setTimestamp();
+
+      return interaction.editReply({ embeds: [embed] });
+    } catch (e) {
+      console.error('[suggestions]', e);
+      return interaction.editReply(`Error: ${e.message}`);
+    }
+  }
+
   // ── /apps slash command ────────────────────────────────────────────────────
   if (interaction.isChatInputCommand() && interaction.commandName === 'apps') {
     if (!config.isAdmin(interaction.member)) {
@@ -2061,6 +2117,21 @@ function parseGameDuration(s) {
   const unit = m[2] === 'h' ? `Hour${n !== 1 ? 's' : ''}` : m[2] === 'd' ? `Day${n !== 1 ? 's' : ''}` : `Week${n !== 1 ? 's' : ''}`;
   return { days, label: `${n} ${unit}`, permanent: false };
 }
+
+// ─── Suggestions forum ─────────────────────────────────────────────────────────
+client.on(Events.ThreadCreate, async (thread, newlyCreated) => {
+  if (!newlyCreated) return;
+  if (thread.parentId !== config.SUGGESTIONS_CHANNEL_ID) return;
+  try {
+    await new Promise(r => setTimeout(r, 1500));
+    const msg = await thread.fetchStarterMessage().catch(() => null);
+    if (!msg) return;
+    await msg.react('👍');
+    await msg.react('👎');
+  } catch (e) {
+    console.error('[suggestions] Auto-react failed:', e.message);
+  }
+});
 
 client.on('error', err => console.error('[Discord Client Error]', err));
 process.on('unhandledRejection', (reason) => console.error('[Unhandled Rejection]', reason));
