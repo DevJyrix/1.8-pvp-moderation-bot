@@ -248,6 +248,23 @@ const CLOSE_REASONS = {
       dm: 'Thank you for applying for Content Creator. After review, your content did not meet our quality standards at this time. Keep creating and feel free to apply again in the future!',
     },
   ],
+  business: [
+    {
+      value: 'resolved',
+      label: 'Inquiry Addressed',
+      dm: 'Thank you for your business inquiry. Our team has reviewed it and will follow up if we are interested in moving forward.',
+    },
+    {
+      value: 'no_action',
+      label: 'Not Interested at This Time',
+      dm: 'Thank you for reaching out. Unfortunately we are not looking into this type of partnership or inquiry at this time.',
+    },
+    {
+      value: 'duplicate',
+      label: 'Duplicate / Already Contacted',
+      dm: 'Your inquiry was closed as we already have a record of this contact. If you have new information, feel free to submit a new ticket.',
+    },
+  ],
   default: [
     {
       value: 'resolved',
@@ -387,6 +404,12 @@ function buildOtherTicketsPanel() {
           value: 'staff_discord',
           emoji: '💬',
         },
+        {
+          label: 'Business Inquiry',
+          description: 'Partnerships, sponsorships or business contact',
+          value: 'business',
+          emoji: '💼',
+        },
       ])
   );
   return { embeds: [embed], components: [menu] };
@@ -409,13 +432,14 @@ async function handleGameReport(interaction) {
         .setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(50)
     ),
     new ActionRowBuilder().addComponents(
-      new TextInputBuilder().setCustomId('rule').setLabel('Rule broken (e.g. A1, C1)')
-        .setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(10)
+      new TextInputBuilder().setCustomId('rule').setLabel('Rule broken (e.g. Autoclicking, Exploiting)')
+        .setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(50)
+        .setPlaceholder('Autoclicker / Exploiting / Toxicity / Stat Farming / etc.')
     ),
     new ActionRowBuilder().addComponents(
-      new TextInputBuilder().setCustomId('evidence').setLabel('Evidence (Medal or YouTube only)')
+      new TextInputBuilder().setCustomId('evidence').setLabel('Evidence link (Medal, YouTube or Streamable)')
         .setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(300)
-        .setPlaceholder('https://medal.tv/... or https://youtube.com/...')
+        .setPlaceholder('https://medal.tv/...  https://streamable.com/...  https://youtube.com/...')
     ),
     new ActionRowBuilder().addComponents(
       new TextInputBuilder().setCustomId('description').setLabel('What happened?')
@@ -432,8 +456,8 @@ async function submitGameReport(interaction) {
   const description = interaction.fields.getTextInputValue('description').trim();
   const nick        = getSafeNick(interaction.member);
 
-  const validEvidence = /^https?:\/\/(www\.)?(medal\.tv|youtube\.com|youtu\.be)\//i.test(evidence);
-  if (!validEvidence) return interaction.reply({ content: 'Invalid evidence link. We only accept **Medal** or **YouTube** links.', flags: 64 });
+  const validEvidence = /^https?:\/\/(www\.)?(medal\.tv|youtube\.com|youtu\.be|streamable\.com)\//i.test(evidence);
+  if (!validEvidence) return interaction.reply({ content: 'Invalid evidence link. We only accept **Medal**, **YouTube**, or **Streamable** links.', flags: 64 });
 
   await interaction.deferReply({ flags: 64 });
 
@@ -676,6 +700,68 @@ async function handleArt(interaction) {
 }
 async function submitArt(interaction) {
   return interaction.reply({ content: 'Art submissions are temporarily unavailable.', flags: 64 });
+}
+
+// Business Inquiry
+async function handleBusiness(interaction) {
+  const nick = getSafeNick(interaction.member);
+  const dup  = dupCheck(interaction.guild, interaction.user.id, 'biz-');
+  if (dup) return interaction.reply({ content: `You already have an open business inquiry: <#${dup.id}>`, flags: 64 });
+
+  const modal = new ModalBuilder().setCustomId('modal_business').setTitle('Business Inquiry');
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder().setCustomId('company').setLabel('Company / Organisation name')
+        .setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(100)
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder().setCustomId('inquiry_type').setLabel('Type of inquiry (e.g. Sponsorship)')
+        .setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(100)
+        .setPlaceholder('Partnership / Sponsorship / Content collab / Other')
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder().setCustomId('details').setLabel('Describe your inquiry')
+        .setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(1000)
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder().setCustomId('contact').setLabel('Best contact email or link')
+        .setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(200)
+    ),
+  );
+  return interaction.showModal(modal);
+}
+
+async function submitBusiness(interaction) {
+  const company     = interaction.fields.getTextInputValue('company').trim();
+  const inquiryType = interaction.fields.getTextInputValue('inquiry_type').trim();
+  const details     = interaction.fields.getTextInputValue('details').trim();
+  const contact     = interaction.fields.getTextInputValue('contact').trim();
+  const nick        = getSafeNick(interaction.member);
+
+  await interaction.deferReply({ flags: 64 });
+
+  const channel = await createChannel(
+    interaction.guild, `biz-${nick}`, cfg.ADMIN_TICKET_CATEGORY_ID || cfg.TICKET_CATEGORY_ID, interaction.user.id
+  ).catch(async e => { await interaction.editReply(`Failed to create channel: ${e.message}`); return null; });
+  if (!channel) return;
+
+  const embed = new EmbedBuilder().setColor(0xFEE75C).setTitle('Business Inquiry')
+    .addFields(
+      { name: 'Opened by',    value: `<@${interaction.user.id}>`, inline: true },
+      { name: 'Company',      value: company,                     inline: true },
+      { name: 'Inquiry Type', value: inquiryType,                 inline: true },
+      { name: 'Details',      value: details,                     inline: false },
+      { name: 'Contact',      value: contact,                     inline: false },
+    )
+    .setFooter({ text: 'Use the button below to close this ticket' });
+
+  const closeRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('ticket_close').setLabel('Close Ticket').setStyle(ButtonStyle.Danger)
+  );
+
+  saveTicketMeta(channel.id, { type: 'business', creatorId: interaction.user.id, creatorTag: interaction.user.tag, openedAt: new Date().toISOString(), channelId: channel.id });
+  await channel.send({ content: `<@${interaction.user.id}> ${staffPing(interaction.guild, 3, 3)}`, embeds: [embed], components: [closeRow] });
+  await interaction.editReply({ content: `Inquiry created: <#${channel.id}>` });
 }
 
 // ── CC YouTube lookup ──────────────────────────────────────────────────────────
@@ -981,6 +1067,7 @@ function _creatorFromTopic(channel) {
 
 module.exports = {
   getCCOpen, loadState, saveState, getDMToggle, setDMToggle,
+  loadTicketMeta,
   buildGameReportPanel,
   buildDiscordReportPanel,
   buildAppealPanel,
@@ -990,11 +1077,13 @@ module.exports = {
   handleAppeal,
   handleCC,
   handleArt,
+  handleBusiness,
   submitGameReport,
   submitDiscordReport,
   submitAppeal,
   submitCC,
   submitArt,
+  submitBusiness,
   closeTicket,
   handleCloseReason,
 };

@@ -74,6 +74,8 @@ module.exports = {
   // ProfileStore
   PROFILESTORE_NAME:          process.env.PROFILESTORE_NAME       || 'PlayerStore',
   PROFILESTORE_KEY_PREFIX:    process.env.PROFILESTORE_KEY_PREFIX ?? '',
+  // Bloxlink
+  BLOXLINK_API_KEY:           process.env.BLOXLINK_API_KEY || null,
   // YouTube API (for CC applications)
   YOUTUBE_API_KEY:            process.env.YOUTUBE_API_KEY || null,
   CC_VIDEO_MIN_VIEWS:         parseInt(process.env.CC_VIDEO_MIN_VIEWS || '10000'),

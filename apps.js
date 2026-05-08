@@ -8,7 +8,8 @@ const {
 const config = require('./config');
 const roblox = require('./roblox');
 
-let appsOpen = true;
+// Per-type open state — all closed by default until /apps opens them
+const appStates = { tester: false, discord_staff: false, game_staff: false };
 
 const APP_TYPES = {
   tester: {
@@ -58,16 +59,17 @@ const APP_TYPES = {
 // ── Panel ─────────────────────────────────────────────────────────────────────
 
 function buildAppPanel() {
+  const anyOpen = Object.values(appStates).some(Boolean);
+  const status  = (type) => appStates[type] ? '🟢 Open' : '🔴 Closed';
+
   const embed = new EmbedBuilder()
-    .setColor(appsOpen ? 0x57F287 : 0xED4245)
+    .setColor(anyOpen ? 0x57F287 : 0xED4245)
     .setTitle('1.8 Arena — Applications')
     .setDescription(
-      appsOpen
-        ? 'Applications are currently **open**! Choose your application type below.\n\n' +
-          '🎮 **Game Tester** — Requires `Active Member` role\n' +
-          '💬 **Discord Staff** — Requires `Dedicated Member` role\n' +
-          '⚔️ **Game Staff** — Requires `Dedicated Member` role'
-        : '**Applications are currently closed.** Check back soon!'
+      '**Choose an application type below.**\n\n' +
+      `🎮 **Game Tester** — ${status('tester')} — Requires \`Active Member\` role\n` +
+      `💬 **Discord Staff** — ${status('discord_staff')} — Requires \`Dedicated Member\` role\n` +
+      `⚔️ **Game Staff** — ${status('game_staff')} — Requires \`Dedicated Member\` role`
     )
     .setTimestamp();
 
@@ -77,19 +79,19 @@ function buildAppPanel() {
       .setLabel('Game Tester')
       .setStyle(ButtonStyle.Success)
       .setEmoji('🎮')
-      .setDisabled(!appsOpen),
+      .setDisabled(!appStates.tester),
     new ButtonBuilder()
       .setCustomId('app_open_discord_staff')
       .setLabel('Discord Staff')
       .setStyle(ButtonStyle.Primary)
       .setEmoji('💬')
-      .setDisabled(!appsOpen),
+      .setDisabled(!appStates.discord_staff),
     new ButtonBuilder()
       .setCustomId('app_open_game_staff')
       .setLabel('Game Staff')
       .setStyle(ButtonStyle.Danger)
       .setEmoji('⚔️')
-      .setDisabled(!appsOpen),
+      .setDisabled(!appStates.game_staff),
   );
 
   return { embeds: [embed], components: [row] };
@@ -123,8 +125,8 @@ async function showAppModal(interaction, appType) {
   const def = APP_TYPES[appType];
   if (!def) return interaction.reply({ content: 'Unknown application type.', flags: 64 });
 
-  if (!appsOpen) {
-    return interaction.reply({ content: 'Applications are currently closed.', flags: 64 });
+  if (!appStates[appType]) {
+    return interaction.reply({ content: `**${def.label}** applications are currently closed.`, flags: 64 });
   }
 
   const reqRoleId = config[def.roleKey];
@@ -390,12 +392,21 @@ async function handleCloseAppTicket(interaction) {
 
 // ── State helpers ─────────────────────────────────────────────────────────────
 
-function setAppsOpen(open)  { appsOpen = open; }
-function getAppsOpen()      { return appsOpen; }
+function setAppOpen(type, open) {
+  if (type === 'all') {
+    Object.keys(appStates).forEach(k => { appStates[k] = open; });
+  } else if (type in appStates) {
+    appStates[type] = open;
+  }
+}
+function getAppStates()     { return { ...appStates }; }
+// kept for backward compat
+function setAppsOpen(open)  { setAppOpen('all', open); }
+function getAppsOpen()      { return Object.values(appStates).some(Boolean); }
 
 module.exports = {
   APP_TYPES,
   buildAppPanel, postPanel, refreshPanel,
   handleAppButton, showAppModal, handleAppModal, handleAppAccept, handleAppDeny, handleCloseAppTicket,
-  setAppsOpen, getAppsOpen,
+  setAppsOpen, getAppsOpen, setAppOpen, getAppStates,
 };

@@ -9,6 +9,7 @@ const {
 } = require('discord.js');
 
 const config   = require('./config');
+const bloxlink = require('./bloxlink');
 const roblox   = require('./roblox');
 const { RULES, getBanDuration, banExpiry, isActiveBan } = require('./rules');
 const { checkRaid, resetLockout }  = require('./antiraid');
@@ -18,8 +19,10 @@ const tickets = require('./tickets');
 const {
   buildGameReportPanel, buildDiscordReportPanel, buildAppealPanel, buildOtherTicketsPanel,
   handleGameReport, handleDiscordReport, handleAppeal, handleCC, handleArt,
-  submitGameReport, submitDiscordReport, submitAppeal, submitCC, submitArt,
+  handleBusiness,
+  submitGameReport, submitDiscordReport, submitAppeal, submitCC, submitArt, submitBusiness,
   closeTicket, handleCloseReason, getCCOpen, loadState, saveState, getDMToggle, setDMToggle,
+  loadTicketMeta,
 } = tickets;
 const { addInfraction, removeInfraction, clearWarnsAndNotes, buildFullInfractionEmbed } = require('./infractions');
 const { recordAction, buildStatsEmbed: buildModStatsEmbed, buildModStatsRow } = require('./modstats');
@@ -41,6 +44,19 @@ const client = new Client({
 
 // Tracks messages per user since bot start (for application embeds)
 const msgCountMap = new Map();
+
+// Tracks the stats-embed message to auto-refresh after ban/unban/kick actions
+// key: robloxUserId (string) → { messageId, channelId }
+const statsEmbedCache = new Map();
+
+// Resolves a Discord user's linked Roblox username via Bloxlink for log display
+async function resolveStaffRoblox(discordUser, guild) {
+  const base = { tag: discordUser.tag, id: discordUser.id };
+  if (!guild) return base;
+  const linked = await bloxlink.getRobloxFromDiscord(discordUser.id, guild.id).catch(() => null);
+  if (linked?.name) base.robloxName = linked.name;
+  return base;
+}
 
 // ─── Slash commands ────────────────────────────────────────────────────────────
 const slashDefs = [
@@ -127,16 +143,27 @@ const slashDefs = [
     .setDefaultMemberPermissions(0),
   new SlashCommandBuilder()
     .setName('apps')
-    .setDescription('Open or close applications (Admin only)')
+    .setDescription('Manage applications (Admin only)')
     .setDefaultMemberPermissions(0)
     .addStringOption(o => o
       .setName('action')
       .setDescription('What to do')
       .setRequired(true)
       .addChoices(
-        { name: 'Open applications',    value: 'open'  },
-        { name: 'Close applications',   value: 'close' },
-        { name: 'Post/refresh panel',   value: 'setup' },
+        { name: 'Open',              value: 'open'  },
+        { name: 'Close',             value: 'close' },
+        { name: 'Post/refresh panel', value: 'setup' },
+      )
+    )
+    .addStringOption(o => o
+      .setName('type')
+      .setDescription('Which application type (leave blank for all)')
+      .setRequired(false)
+      .addChoices(
+        { name: 'Game Tester',    value: 'tester'        },
+        { name: 'Discord Staff',  value: 'discord_staff' },
+        { name: 'Game Staff',     value: 'game_staff'    },
+        { name: 'All',            value: 'all'           },
       )
     ),
 ].map(c => c.toJSON());
@@ -423,7 +450,8 @@ client.on('messageCreate', async (msg) => {
       await msg.reply({ embeds: [new EmbedBuilder().setColor(0xED4245).setTitle('User Banned')
         .setDescription(`<@${target.id}> has been banned.\nReason: ${reason}`)
         .setTimestamp()] });
-      await logAction(client, { action: 'BAN', target: { username: target.user.tag }, staff: { tag: msg.author.tag, id: msg.author.id }, reason });
+      const staffObj = await resolveStaffRoblox(msg.author, msg.guild);
+      await logAction(client, { action: 'BAN', target: { username: target.user.tag, discordId: target.id }, staff: staffObj, reason });
     } catch (e) { msg.reply(`Error: ${e.message}`); }
     return;
   }
@@ -442,7 +470,8 @@ client.on('messageCreate', async (msg) => {
       await msg.reply({ embeds: [new EmbedBuilder().setColor(0x57F287).setTitle('User Unbanned')
         .setDescription(`<@${ban.user.id}> has been unbanned.\nReason: ${reason}`)
         .setTimestamp()] });
-      await logAction(client, { action: 'UNBAN', target: { username: ban.user.tag }, staff: { tag: msg.author.tag, id: msg.author.id }, reason });
+      const staffObj = await resolveStaffRoblox(msg.author, msg.guild);
+      await logAction(client, { action: 'UNBAN', target: { username: ban.user.tag, discordId: ban.user.id }, staff: staffObj, reason });
     } catch (e) { msg.reply(`Error: ${e.message}`); }
     return;
   }
@@ -514,7 +543,8 @@ client.on('messageCreate', async (msg) => {
       await msg.reply({ embeds: [new EmbedBuilder().setColor(0xEB459E).setTitle('User Muted')
         .setDescription(`<@${target.id}> has been muted for **${args[2]}**.\nReason: ${reason}`)
         .setTimestamp()] });
-      await logAction(client, { action: 'MUTE', target: { username: target.user.tag }, staff: { tag: msg.author.tag, id: msg.author.id }, duration: args[2], reason });
+      const staffObjMute = await resolveStaffRoblox(msg.author, msg.guild);
+      await logAction(client, { action: 'MUTE', target: { username: target.user.tag, discordId: target.id }, staff: staffObjMute, duration: args[2], reason });
     } catch (e) { msg.reply(`Error: ${e.message}`); }
     return;
   }
@@ -530,7 +560,8 @@ client.on('messageCreate', async (msg) => {
       addInfraction(target.id, { action: 'UNMUTE', staff: msg.author.tag });
       recordAction(msg.author.id, 'UNMUTE', target.user.tag);
       await msg.reply(`Timeout removed for ${target.user.tag}.`);
-      await logAction(client, { action: 'UNMUTE', target: { username: target.user.tag }, staff: { tag: msg.author.tag, id: msg.author.id } });
+      const staffObjUnmute = await resolveStaffRoblox(msg.author, msg.guild);
+      await logAction(client, { action: 'UNMUTE', target: { username: target.user.tag, discordId: target.id }, staff: staffObjUnmute });
     } catch (e) { msg.reply(`Error: ${e.message}`); }
     return;
   }
@@ -549,7 +580,8 @@ client.on('messageCreate', async (msg) => {
       await msg.reply({ embeds: [new EmbedBuilder().setColor(0xFEE75C).setTitle('User Kicked')
         .setDescription(`<@${target.id}> has been kicked.\nReason: ${reason}`)
         .setTimestamp()] });
-      await logAction(client, { action: 'KICK', target: { username: target.user.tag }, staff: { tag: msg.author.tag, id: msg.author.id }, reason });
+      const staffObjKickD = await resolveStaffRoblox(msg.author, msg.guild);
+      await logAction(client, { action: 'KICK', target: { username: target.user.tag, discordId: target.id }, staff: staffObjKickD, reason });
     } catch (e) { msg.reply(`Error: ${e.message}`); }
     return;
   }
@@ -914,6 +946,19 @@ client.on('messageCreate', async (msg) => {
     return;
   }
 
+  // ── .close — re-post the close button inside a ticket (for staff convenience)
+  if (cmd === '.close') {
+    if (!config.isStaff(member)) return;
+    const meta = loadTicketMeta(msg.channel.id);
+    if (!meta) return msg.reply({ content: 'This command can only be used inside a ticket channel.', flags: 64 });
+    const closeRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('ticket_close').setLabel('Close Ticket').setStyle(ButtonStyle.Danger)
+    );
+    await msg.channel.send({ content: `Close this ticket using the button below:`, components: [closeRow] });
+    await msg.delete().catch(() => null);
+    return;
+  }
+
   // ── .escalate <senior|admin> [reason]  — move ticket to a restricted category
   if (cmd === '.escalate') {
     if (!config.isStaff(member)) return;
@@ -928,7 +973,7 @@ client.on('messageCreate', async (msg) => {
     }
 
     // Must be inside a ticket channel
-    const isTicket = /^(gr-|dr-|appeal-|cc-|art-)/.test(msg.channel.name);
+    const isTicket = /^(gr-|dr-|appeal-|cc-|art-|biz-)/.test(msg.channel.name);
     if (!isTicket) return msg.reply('This command can only be used inside a ticket channel.');
 
     const cfg        = require('./config');
@@ -1277,7 +1322,8 @@ async function executeGameBan(robloxUser, ruleCode, staffUser, reason, replyMsg,
 
   if (replyMsg) await replyMsg.edit({ content: '', embeds: [embed], components: [] });
   recordAction(staffUser.id, 'GBAN', robloxUser.name);
-  await logAction(client, { action: 'GBAN', target: { username: robloxUser.name, robloxId: userId }, staff: { tag: staffUser.tag, id: staffUser.id }, rule: ruleCode, duration: label, reason, permanent, extra: evidence ? `Evidence: ${evidence}` : null });
+  const staffObj = await resolveStaffRoblox(staffUser, client.guilds.cache.first());
+  await logAction(client, { action: 'GBAN', target: { username: robloxUser.name, robloxId: userId }, staff: staffObj, rule: ruleCode, duration: label, reason, permanent, extra: evidence ? `Evidence: ${evidence}` : null });
 
   // Kick the player immediately if they are currently in-game
   await roblox.publishMessage('ModAction', {
@@ -1333,7 +1379,8 @@ async function executeGameUnban(robloxUser, staffUser, reason, replyMsg) {
 
   if (replyMsg) await replyMsg.edit({ content: '', embeds: [embed], components: [] });
   recordAction(staffUser.id, 'UNGBAN', robloxUser.name);
-  await logAction(client, { action: 'UNGBAN', target: { username: robloxUser.name, robloxId: userId }, staff: { tag: staffUser.tag, id: staffUser.id }, reason });
+  const staffObjUngban = await resolveStaffRoblox(staffUser, client.guilds.cache.first());
+  await logAction(client, { action: 'UNGBAN', target: { username: robloxUser.name, robloxId: userId }, staff: staffObjUngban, reason });
 
   await roblox.publishMessage('ModAction', { action: 'unban', userId: String(userId) });
 }
@@ -1356,7 +1403,8 @@ async function executeGameKick(robloxUser, staffUser, reason, replyMsg) {
 
   if (replyMsg) await replyMsg.edit({ content: '', embeds: [embed], components: [] });
   recordAction(staffUser.id, 'GKICK', robloxUser.name);
-  await logAction(client, { action: 'GKICK', target: { username: robloxUser.name, robloxId: userId }, staff: { tag: staffUser.tag, id: staffUser.id }, reason });
+  const staffObjKick = await resolveStaffRoblox(staffUser, client.guilds.cache.first());
+  await logAction(client, { action: 'GKICK', target: { username: robloxUser.name, robloxId: userId }, staff: staffObjKick, reason });
 }
 
 // ─── Interactions ──────────────────────────────────────────────────────────────
@@ -1628,6 +1676,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (val === 'cc')             return handleCC(interaction);
     if (val === 'staff_game')     return apps.showAppModal(interaction, 'game_staff');
     if (val === 'staff_discord')  return apps.showAppModal(interaction, 'discord_staff');
+    if (val === 'business')       return handleBusiness(interaction);
     return;
   }
 
@@ -1638,11 +1687,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   // Ticket modal submits
   if (interaction.type === InteractionType.ModalSubmit) {
-    if (interaction.customId === 'modal_gr')     return submitGameReport(interaction);
-    if (interaction.customId === 'modal_dr')     return submitDiscordReport(interaction);
-    if (interaction.customId === 'modal_appeal') return submitAppeal(interaction);
-    if (interaction.customId === 'modal_cc')     return submitCC(interaction);
-    if (interaction.customId === 'modal_art')    return submitArt(interaction);
+    if (interaction.customId === 'modal_gr')       return submitGameReport(interaction);
+    if (interaction.customId === 'modal_dr')       return submitDiscordReport(interaction);
+    if (interaction.customId === 'modal_appeal')   return submitAppeal(interaction);
+    if (interaction.customId === 'modal_cc')       return submitCC(interaction);
+    if (interaction.customId === 'modal_art')      return submitArt(interaction);
+    if (interaction.customId === 'modal_business') return submitBusiness(interaction);
   }
 
   // Stats — Game Ban button
@@ -1651,6 +1701,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return interaction.reply({ content: 'Game Staff only.', flags: 64 });
     }
     const userId = interaction.customId.split('_')[1];
+    // Cache the stats embed message so we can refresh it after the ban
+    if (interaction.message) statsEmbedCache.set(userId, { messageId: interaction.message.id, channelId: interaction.channelId });
     return interaction.reply({ content: 'Select rule violated:', components: [ruleMenu(userId, config.isAdmin(interaction.member))], flags: 64 });
   }
 
@@ -1681,6 +1733,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return interaction.reply({ content: 'Game Staff only.', flags: 64 });
     }
     const userId = interaction.customId.split('_')[1];
+    if (interaction.message) statsEmbedCache.set(userId, { messageId: interaction.message.id, channelId: interaction.channelId });
     // Show a modal to enter kick reason
     const modal = new ModalBuilder()
       .setCustomId(`gkick_modal_${userId}`)
@@ -1794,11 +1847,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await interaction.editReply({ content: `**${user.name}** has been game-banned for rule \`${ruleCode}\` — ${RULES[ruleCode]?.name}.` });
       }
 
-      // Refresh stats embed
+      // Refresh stats embed via cache
       try {
         const { embed } = await buildStatsEmbed(user, interaction.user);
-        const original = await interaction.message?.fetch().catch(() => null);
-        if (original) await original.edit({ embeds: [embed], components: statsRow(userId, true) });
+        const cached = statsEmbedCache.get(userId);
+        if (cached) {
+          const ch  = await client.channels.fetch(cached.channelId).catch(() => null);
+          const msg = ch ? await ch.messages.fetch(cached.messageId).catch(() => null) : null;
+          if (msg) await msg.edit({ embeds: [embed], components: statsRow(userId, true) });
+        }
       } catch {}
     } catch (e) {
       console.error('[gban modal]', e.message);
@@ -1815,11 +1872,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
     try {
       const user = await roblox.getUserById(userId);
       await executeGameKick(user, interaction.user, reason, null);
-      // Refresh stats embed
+      // Refresh stats embed via cache
       try {
         const { embed, isBanned } = await buildStatsEmbed(user, interaction.user);
-        const original = await interaction.message?.fetch().catch(() => null);
-        if (original) await original.edit({ embeds: [embed], components: statsRow(userId, isBanned) });
+        const cached = statsEmbedCache.get(userId);
+        if (cached) {
+          const ch  = await client.channels.fetch(cached.channelId).catch(() => null);
+          const msg = ch ? await ch.messages.fetch(cached.messageId).catch(() => null) : null;
+          if (msg) await msg.edit({ embeds: [embed], components: statsRow(userId, isBanned) });
+        }
       } catch {}
       await interaction.editReply({ content: `**${user.name}** has been game-kicked. Reason: ${reason}` });
     } catch (e) { await interaction.editReply({ content: `Error: ${e.message}` }); }
@@ -2050,22 +2111,27 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (!config.isAdmin(interaction.member)) {
       return interaction.reply({ content: 'Admin only.', flags: 64 });
     }
-    const action = interaction.options.getString('action');
-    if (action === 'open') {
-      apps.setAppsOpen(true);
-      await apps.refreshPanel(client);
-      return interaction.reply({ content: '✅ Applications are now **open**.', flags: 64 });
-    }
-    if (action === 'close') {
-      apps.setAppsOpen(false);
-      await apps.refreshPanel(client);
-      return interaction.reply({ content: '🔒 Applications are now **closed**.', flags: 64 });
-    }
+    const action  = interaction.options.getString('action');
+    const appType = interaction.options.getString('type') || 'all';
+
     if (action === 'setup') {
       const ch = await client.channels.fetch(config.APP_CHANNEL_ID).catch(() => null);
       if (!ch) return interaction.reply({ content: 'App channel not found. Check APP_CHANNEL_ID in config.', flags: 64 });
       await apps.postPanel(ch);
       return interaction.reply({ content: `✅ Application panel posted in <#${config.APP_CHANNEL_ID}>.`, flags: 64 });
+    }
+
+    if (action === 'open' || action === 'close') {
+      const open = action === 'open';
+      apps.setAppOpen(appType, open);
+      await apps.refreshPanel(client);
+
+      const TYPE_LABELS = { tester: 'Game Tester', discord_staff: 'Discord Staff', game_staff: 'Game Staff', all: 'All applications' };
+      const label = TYPE_LABELS[appType] || appType;
+      return interaction.reply({
+        content: open ? `✅ **${label}** are now **open**.` : `🔒 **${label}** are now **closed**.`,
+        flags: 64,
+      });
     }
     return;
   }

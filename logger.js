@@ -43,8 +43,21 @@ async function logAction(client, { action, target, staff, rule, duration, reason
       fields.push({ name: 'Player', value: playerVal, inline: true });
     }
   }
-  if (target?.discordTag) fields.push({ name: 'Discord',    value: target.discordTag, inline: true });
-  if (staff)              fields.push({ name: 'Moderator',  value: `${staff.tag}`, inline: true });
+  if (target?.discordTag) {
+    const discordVal = target.discordId
+      ? `${target.discordTag} (\`${target.discordId}\`)`
+      : target.discordTag;
+    fields.push({ name: 'Discord', value: discordVal, inline: true });
+  }
+  if (target?.discordId && !target?.discordTag) {
+    fields.push({ name: 'Discord ID', value: `\`${target.discordId}\``, inline: true });
+  }
+  if (staff) {
+    const modVal = staff.robloxName
+      ? `${staff.robloxName} | <@${staff.id}>`
+      : `${staff.tag} | <@${staff.id}>`;
+    fields.push({ name: 'Moderator', value: modVal, inline: true });
+  }
   if (rule && r)          fields.push({ name: 'Rule',       value: `${rule} — ${r.name}`, inline: true });
   if (duration)           fields.push({ name: 'Duration',   value: permanent ? 'Permanent' : duration, inline: true });
   if (reason)             fields.push({ name: 'Reason',     value: reason, inline: false });
