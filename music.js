@@ -101,6 +101,8 @@ async function ytdlpJson(args) {
     proc.stderr.on('data', d => err += d.toString());
     proc.on('close', code => {
       if (code !== 0) {
+        if (err.includes('DRM protected'))
+          return reject(new Error('This video is DRM-protected and cannot be streamed.'));
         const detail = err.trim() ? ': ' + err.trim().split('\n').slice(-3).join(' | ') : '';
         return reject(new Error(`yt-dlp exited with code ${code}${detail}`));
       }
