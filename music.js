@@ -74,7 +74,7 @@ const YTDLP_BASE = [
   '--format', 'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio/best',
   '--no-playlist',
   '--no-check-certificate',
-  '--extractor-args', 'youtube:player_client=tv,mweb',
+  '--extractor-args', 'youtube:player_client=web_embedded,tv_embedded,tv,mweb',
   '--age-limit', '25',
 ];
 
