@@ -62,6 +62,12 @@ async function ensureYtdlp() {
   }
 }
 
+// Ensure yt-dlp subprocesses can find Node.js for n-challenge solving
+const YTDLP_ENV = {
+  ...process.env,
+  PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH || ''}`,
+};
+
 // ── yt-dlp options ─────────────────────────────────────────────────────────────
 // mweb client works on datacenter IPs; no skip=dash,hls so all formats are available
 const YTDLP_BASE = [
@@ -90,7 +96,7 @@ async function ytdlpJson(args) {
   return new Promise((resolve, reject) => {
     let out = '';
     let err = '';
-    const proc = spawn(YTDLP_BIN, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const proc = spawn(YTDLP_BIN, args, { stdio: ['ignore', 'pipe', 'pipe'], env: YTDLP_ENV });
     proc.stdout.on('data', d => out += d.toString());
     proc.stderr.on('data', d => err += d.toString());
     proc.on('close', code => {
@@ -171,12 +177,14 @@ async function getDirectUrl(trackUrl) {
   return new Promise((resolve, reject) => {
     let out = '';
     let err = '';
-    const proc = spawn(YTDLP_BIN, [...YTDLP_ARGS, trackUrl], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const proc = spawn(YTDLP_BIN, [...YTDLP_ARGS, trackUrl], { stdio: ['ignore', 'pipe', 'pipe'], env: YTDLP_ENV });
     proc.stdout.on('data', d => out += d.toString());
     proc.stderr.on('data', d => err += d.toString());
     proc.on('close', code => {
       const url = out.trim().split('\n')[0];
       if (code !== 0 || !url) {
+        if (err.includes('DRM protected'))
+          return reject(new Error('This video is DRM-protected and cannot be streamed.'));
         const detail = err.trim() ? ': ' + err.trim().split('\n').slice(-3).join(' | ') : '';
         return reject(new Error(`yt-dlp failed to get stream URL${detail}`));
       }
