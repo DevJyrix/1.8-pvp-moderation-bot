@@ -68,7 +68,7 @@ const YTDLP_BASE = [
   '--format', 'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio/best',
   '--no-playlist',
   '--no-check-certificate',
-  '--extractor-args', 'youtube:player_client=tv_embedded',
+  '--extractor-args', 'youtube:player_client=mweb,ios',
   '--age-limit', '25',
 ];
 
@@ -246,16 +246,18 @@ async function playNext(guildId) {
   q.current   = track;
 
   try {
-    // Kill previous processes
     if (q.ytdlpProc) { try { q.ytdlpProc.kill('SIGKILL'); } catch {} q.ytdlpProc = null; }
     if (q.ffmpegProc) { try { q.ffmpegProc.kill('SIGKILL'); } catch {} q.ffmpegProc = null; }
 
-    // Pipe yt-dlp → ffmpeg → Discord (avoids CDN URL header issues)
-    const ytdlpProc = spawn(YTDLP_BIN, [...YTDLP_BASE, '-o', '-', track.url],
-      { stdio: ['ignore', 'pipe', 'pipe'] });
+    // Get the direct CDN URL from yt-dlp, then pass it straight to ffmpeg.
+    // Avoids the unreliable yt-dlp→ffmpeg stdin pipe.
+    const directUrl = await getDirectUrl(track.url);
 
     const ffmpegProc = spawn(ffmpegPath, [
-      '-i', 'pipe:0',
+      '-reconnect', '1',
+      '-reconnect_streamed', '1',
+      '-reconnect_delay_max', '5',
+      '-i', directUrl,
       '-vn',
       '-c:a', 'libopus',
       '-b:a', '128k',
@@ -263,19 +265,14 @@ async function playNext(guildId) {
       '-ac', '2',
       '-f', 'ogg',
       'pipe:1',
-    ], { stdio: ['pipe', 'pipe', 'pipe'] });
+    ], { stdio: ['ignore', 'pipe', 'pipe'] });
 
-    ytdlpProc.stdout.pipe(ffmpegProc.stdin);
-
-    ytdlpProc.stderr.on('data', d => { const m = d.toString().trim(); if (m) console.error('[yt-dlp]', m); });
     ffmpegProc.stderr.on('data', d => {
       const m = d.toString();
       if (!m.includes('size=') && !m.includes('time=')) console.error('[ffmpeg]', m.trim());
     });
-    ytdlpProc.on('error', err => console.error('[yt-dlp] spawn error:', err.message));
     ffmpegProc.on('error', err => console.error('[ffmpeg] spawn error:', err.message));
 
-    q.ytdlpProc = ytdlpProc;
     q.ffmpegProc = ffmpegProc;
 
     const resource = createAudioResource(ffmpegProc.stdout, {

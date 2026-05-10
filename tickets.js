@@ -52,6 +52,18 @@ const { isActiveBan, RULES } = require('./rules');
 const fs   = require('fs');
 const path = require('path');
 
+// Maps a user-entered rule name or code to the canonical code (e.g. "Exploiting" → "C1").
+// Returns { code, rule } if found, or null if unrecognised.
+function resolveRule(input) {
+  const up = input.trim().toUpperCase();
+  if (RULES[up]) return { code: up, rule: RULES[up] };
+  const lower = input.trim().toLowerCase();
+  for (const [code, rule] of Object.entries(RULES)) {
+    if (rule.name.toLowerCase() === lower) return { code, rule };
+  }
+  return null;
+}
+
 const COUNTER_FILE    = path.join(__dirname, 'ticket_counter.json');
 const TICKET_META_DIR = path.join(__dirname, 'data', 'tickets');
 fs.mkdirSync(TICKET_META_DIR, { recursive: true });
@@ -451,7 +463,7 @@ async function handleGameReport(interaction) {
 
 async function submitGameReport(interaction) {
   const reported    = interaction.fields.getTextInputValue('reported').trim();
-  const rule        = interaction.fields.getTextInputValue('rule').trim().toUpperCase();
+  const ruleInput   = interaction.fields.getTextInputValue('rule').trim();
   const evidence    = interaction.fields.getTextInputValue('evidence').trim();
   const description = interaction.fields.getTextInputValue('description').trim();
   const nick        = getSafeNick(interaction.member);
@@ -466,7 +478,8 @@ async function submitGameReport(interaction) {
   ).catch(async e => { await interaction.editReply(`Failed to create channel: ${e.message}`); return null; });
   if (!channel) return;
 
-  const ruleInfo = RULES[rule] ? `${rule} — ${RULES[rule].name}` : rule;
+  const resolved = resolveRule(ruleInput);
+  const ruleInfo = resolved ? `${resolved.code} — ${resolved.rule.name}` : ruleInput;
   const embed = new EmbedBuilder().setColor(0xED4245).setTitle('Game Report')
     .addFields(
       { name: 'Opened by',       value: `<@${interaction.user.id}>`, inline: true },
@@ -574,9 +587,10 @@ async function submitAppeal(interaction) {
   const nickBase = (member.nickname || '').split(/[\s(]/)[0].trim().toLowerCase();
   const isVerified = nickBase.length > 0 && nickBase === robloxUsername.toLowerCase();
 
-  if (!isVerified && member.nickname) {
+  if (!isVerified) {
+    const currentNick = member.nickname ? `**${member.nickname}**` : 'none (no nickname set)';
     return interaction.reply({
-      content: `You can only appeal for your own account. Your server nickname shows **${member.nickname}** — please enter the correct Roblox username.`,
+      content: `You can only appeal for your own account.\n\nYour server nickname must match the Roblox username you entered.\nYour current nickname: ${currentNick}\nYou entered: **${robloxUsername}**\n\nPlease set your server nickname to your Roblox username and try again.`,
       flags: 64,
     });
   }

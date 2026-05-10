@@ -139,8 +139,16 @@ const slashDefs = [
     .setDefaultMemberPermissions(0),
   new SlashCommandBuilder()
     .setName('suggestions')
-    .setDescription('Show the top voted suggestions (Admin only)')
-    .setDefaultMemberPermissions(0),
+    .setDescription('Suggestions tools (Admin only)')
+    .setDefaultMemberPermissions(0)
+    .addStringOption(o => o
+      .setName('action')
+      .setDescription('What to do')
+      .setRequired(false)
+      .addChoices(
+        { name: 'Top voted (default)',               value: 'top'      },
+        { name: 'Re-react all (clear + add 👍👎)',   value: 'rereact'  },
+      )),
   new SlashCommandBuilder()
     .setName('apps')
     .setDescription('Manage applications (Admin only)')
@@ -2064,12 +2072,34 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const forum = await client.channels.fetch(config.SUGGESTIONS_CHANNEL_ID).catch(() => null);
       if (!forum) return interaction.editReply('Suggestions channel not found. Check SUGGESTIONS_CHANNEL_ID.');
 
-      const { threads: active }   = await forum.threads.fetchActive();
-      const { threads: archived } = await forum.threads.fetchArchived({ limit: 50, fetchAll: false });
-      const allThreads = [...active.values(), ...archived.values()];
+      const action = interaction.options.getString('action') ?? 'top';
 
+      // Fetch all threads (active + up to 100 archived)
+      const { threads: active } = await forum.threads.fetchActive();
+      const { threads: archived } = await forum.threads.fetchArchived({ limit: 100, fetchAll: false });
+      const allThreads = [...active.values(), ...archived.values()];
       if (!allThreads.length) return interaction.editReply('No suggestion posts found.');
 
+      // ── Re-react action ──────────────────────────────────────────────────
+      if (action === 'rereact') {
+        await interaction.editReply(`Found **${allThreads.length}** posts. Clearing and re-adding reactions…`);
+        let done = 0, failed = 0;
+        for (const thread of allThreads) {
+          try {
+            const msg = await thread.fetchStarterMessage().catch(() => null);
+            if (!msg) { failed++; continue; }
+            await msg.reactions.removeAll().catch(() => null);
+            await msg.react('👍');
+            await msg.react('👎');
+            done++;
+            // Brief pause to avoid hitting rate limits
+            await new Promise(r => setTimeout(r, 600));
+          } catch { failed++; }
+        }
+        return interaction.editReply(`Done. Re-reacted on **${done}** post${done === 1 ? '' : 's'}${failed ? ` (${failed} skipped)` : ''}.`);
+      }
+
+      // ── Top voted (default) ──────────────────────────────────────────────
       const scored = [];
       for (const thread of allThreads) {
         try {

@@ -1,7 +1,12 @@
 {
   "permissions": {
     "allow": [
-      "Bash(node -e \"try { const p = require\\('ffmpeg-static'\\); console.log\\('ffmpeg-static path:', p\\); const fs = require\\('fs'\\); console.log\\('exists:', p ? fs.existsSync\\(p\\) : false\\); } catch\\(e\\) { console.log\\('error:', e.message\\); }\")"
+      "Bash(node -e \"try { const p = require\\('ffmpeg-static'\\); console.log\\('ffmpeg-static path:', p\\); const fs = require\\('fs'\\); console.log\\('exists:', p ? fs.existsSync\\(p\\) : false\\); } catch\\(e\\) { console.log\\('error:', e.message\\); }\")",
+      "Bash(git fetch *)",
+      "Bash(git stash *)",
+      "Bash(git pull *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }
