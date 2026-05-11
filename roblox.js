@@ -132,6 +132,8 @@ function normaliseStats(d) {
   n.losses           = s.Losses           ?? s.losses           ?? d.losses           ?? null;
   n.playtime         = s.Playtime         ?? s.playtime         ?? d.playtime         ?? null;
   n.clicksPerSecond  = s.CPS              ?? s.clicksPerSecond  ?? d.clicksPerSecond  ?? null;
+  n.winstreak        = d.Winstreak        ?? d.winstreak        ?? null;
+  n.bestWinstreak    = d.BestWinstreak    ?? d.bestWinstreak    ?? null;
 
   // Progress / XP — experience doubles as progress bar source
   n.progress  = d.Experience ?? d.experience ?? d.progress ?? d.xp ?? null;

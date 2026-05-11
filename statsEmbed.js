@@ -66,17 +66,21 @@ async function buildStatsEmbed(robloxUser, requestedBy) {
   const wins  = stats?.wins  ?? null;
   const exp   = stats?.experience ?? stats?.progress ?? null;
   const maxExp = stats?.maxProgress ?? null;
-  const lifetimeKills = stats?.lifetimeKills ?? null;
-  const bestStreak    = stats?.highestKillstreak ?? null;
+  const lifetimeKills  = stats?.lifetimeKills ?? null;
+  const bestStreak     = stats?.highestKillstreak ?? null;
+  const winstreak      = stats?.winstreak ?? null;
+  const bestWinstreak  = stats?.bestWinstreak ?? null;
   const bar = exp != null && maxExp != null ? progressBar(exp, maxExp) : null;
 
   const statFields = [];
   if (rank  != null) statFields.push({ name: 'Rank',          value: `${rank}`,   inline: true });
   if (level != null) statFields.push({ name: 'Level',         value: `${level}`,  inline: true });
   if (coins != null) statFields.push({ name: 'Coins',         value: val(coins),  inline: true });
-  if (wins  != null) statFields.push({ name: 'Wins',          value: val(wins),   inline: true });
-  if (lifetimeKills != null) statFields.push({ name: 'Lifetime Kills', value: val(lifetimeKills), inline: true });
-  if (bestStreak    != null) statFields.push({ name: 'Best Streak',    value: val(bestStreak),    inline: true });
+  if (wins           != null) statFields.push({ name: 'Wins',           value: val(wins),          inline: true });
+  if (winstreak      != null) statFields.push({ name: 'Win Streak',     value: val(winstreak),     inline: true });
+  if (bestWinstreak  != null) statFields.push({ name: 'Best Win Streak', value: val(bestWinstreak), inline: true });
+  if (lifetimeKills  != null) statFields.push({ name: 'Lifetime Kills', value: val(lifetimeKills), inline: true });
+  if (bestStreak     != null) statFields.push({ name: 'Best Kill Streak', value: val(bestStreak),  inline: true });
   if (stats?.playtime != null) statFields.push({ name: 'Playtime', value: formatPlaytime(stats.playtime), inline: true });
 
   if (statFields.length) {
