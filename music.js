@@ -82,10 +82,10 @@ function fmtDuration(secs) {
 }
 
 function parseYtdlpError(stderr) {
+  if (stderr.includes('Sign in to confirm') || stderr.includes('confirm you\'re not a bot'))
+    return 'YouTube is blocking this request (bot detection). Fix: drop a `cookies.txt` from your browser into the bot folder and restart.';
   if (stderr.includes('DRM protected'))
-    return 'This video is DRM-protected and cannot be streamed.';
-  if (stderr.includes('Sign in to confirm') || stderr.includes('confirm you') || stderr.includes('bot'))
-    return 'YouTube blocked this request. Try a more specific search or paste a direct YouTube URL.';
+    return 'YouTube blocked this video — likely bot detection, not real DRM. Fix: drop a `cookies.txt` from your browser into the bot folder and restart.';
   if (stderr.includes('Private video'))
     return 'This video is private.';
   if (stderr.includes('not available') || stderr.includes('unavailable'))
