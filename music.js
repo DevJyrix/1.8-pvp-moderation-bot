@@ -54,7 +54,6 @@ const YTDLP_ENV = {
 };
 
 // ── yt-dlp options ────────────────────────────────────────────────────────────
-// web_embedded + tv avoid bot-detection on datacenter IPs without PO tokens
 const YTDLP_BASE = [
   '--format', 'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio/best',
   '--no-playlist',
@@ -63,9 +62,45 @@ const YTDLP_BASE = [
   '--age-limit', '25',
 ];
 
-// Use cookies.txt if present — paste browser cookies here to bypass sign-in blocks
+// Detect which browser is installed so we can pull YouTube cookies automatically.
+// This bypasses bot-detection without any manual setup from the user.
+function detectBrowser() {
+  const isWin = process.platform === 'win32';
+  const isMac = process.platform === 'darwin';
+  const local   = process.env.LOCALAPPDATA || '';
+  const roaming = process.env.APPDATA || '';
+  const home    = process.env.HOME || '';
+
+  if (isWin) {
+    if (fs.existsSync(path.join(local,   'Google/Chrome/User Data')))    return 'chrome';
+    if (fs.existsSync(path.join(local,   'Microsoft/Edge/User Data')))   return 'edge';
+    if (fs.existsSync(path.join(local,   'BraveSoftware/Brave-Browser/User Data'))) return 'brave';
+    const ffDir = path.join(roaming, 'Mozilla/Firefox/Profiles');
+    if (fs.existsSync(ffDir)) return 'firefox';
+  } else if (isMac) {
+    if (fs.existsSync(path.join(home, 'Library/Application Support/Google/Chrome'))) return 'chrome';
+    if (fs.existsSync(path.join(home, 'Library/Application Support/Firefox')))       return 'firefox';
+  } else {
+    if (fs.existsSync(path.join(home, '.config/google-chrome'))) return 'chrome';
+    if (fs.existsSync(path.join(home, '.mozilla/firefox')))      return 'firefox';
+  }
+  return null;
+}
+
+// Priority: manual cookies.txt > auto browser cookies > no auth
 const COOKIES_FILE = path.join(__dirname, 'cookies.txt');
-if (fs.existsSync(COOKIES_FILE)) YTDLP_BASE.push('--cookies', COOKIES_FILE);
+if (fs.existsSync(COOKIES_FILE)) {
+  YTDLP_BASE.push('--cookies', COOKIES_FILE);
+  console.log('[music] Using cookies.txt for YouTube auth');
+} else {
+  const browser = detectBrowser();
+  if (browser) {
+    YTDLP_BASE.push('--cookies-from-browser', browser);
+    console.log(`[music] Using cookies from ${browser} for YouTube auth`);
+  } else {
+    console.log('[music] No browser cookies found — some videos may be blocked');
+  }
+}
 
 const YTDLP_ARGS      = [...YTDLP_BASE, '--get-url'];
 const YTDLP_INFO_ARGS = [...YTDLP_BASE, '--dump-json'];
@@ -83,9 +118,9 @@ function fmtDuration(secs) {
 
 function parseYtdlpError(stderr) {
   if (stderr.includes('Sign in to confirm') || stderr.includes('confirm you\'re not a bot'))
-    return 'YouTube is blocking this request (bot detection). Fix: drop a `cookies.txt` from your browser into the bot folder and restart.';
+    return 'YouTube blocked this request (bot detection). Make sure you\'re logged into YouTube in your browser and restart the bot.';
   if (stderr.includes('DRM protected'))
-    return 'YouTube blocked this video — likely bot detection, not real DRM. Fix: drop a `cookies.txt` from your browser into the bot folder and restart.';
+    return 'YouTube blocked this video (bot detection). Make sure you\'re logged into YouTube in your browser and restart the bot.';
   if (stderr.includes('Private video'))
     return 'This video is private.';
   if (stderr.includes('not available') || stderr.includes('unavailable'))
