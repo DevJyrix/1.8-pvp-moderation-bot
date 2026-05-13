@@ -87,18 +87,27 @@ function detectBrowser() {
   return null;
 }
 
-// Priority: manual cookies.txt > auto browser cookies > no auth
+// Cookie priority:
+//   1. cookies.txt file in bot folder (manual export)
+//   2. YOUTUBE_COOKIES env var (Railway / server deployments — paste file contents there)
+//   3. Browser auto-detect (local Windows/Mac dev machine)
 const COOKIES_FILE = path.join(__dirname, 'cookies.txt');
+const TEMP_COOKIES = path.join(require('os').tmpdir(), 'arena-bot-yt-cookies.txt');
+
 if (fs.existsSync(COOKIES_FILE)) {
   YTDLP_BASE.push('--cookies', COOKIES_FILE);
-  console.log('[music] Using cookies.txt for YouTube auth');
+  console.log('[music] Auth: cookies.txt');
+} else if (process.env.YOUTUBE_COOKIES) {
+  fs.writeFileSync(TEMP_COOKIES, process.env.YOUTUBE_COOKIES, 'utf8');
+  YTDLP_BASE.push('--cookies', TEMP_COOKIES);
+  console.log('[music] Auth: YOUTUBE_COOKIES env var');
 } else {
   const browser = detectBrowser();
   if (browser) {
     YTDLP_BASE.push('--cookies-from-browser', browser);
-    console.log(`[music] Using cookies from ${browser} for YouTube auth`);
+    console.log(`[music] Auth: browser cookies (${browser})`);
   } else {
-    console.log('[music] No browser cookies found — some videos may be blocked');
+    console.log('[music] Auth: none — some videos may be blocked on server IPs');
   }
 }
 
