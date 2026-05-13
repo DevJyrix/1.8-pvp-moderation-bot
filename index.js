@@ -1437,6 +1437,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
   }
 
+  // Music track-picker buttons
+  if (interaction.isButton() && (
+    interaction.customId.startsWith('music_select_') ||
+    interaction.customId.startsWith('music_cancel_')
+  )) {
+    try { return await music.handleMusicButton(interaction); }
+    catch (e) {
+      console.error('[music]', e.message);
+      interaction.update({ content: `Error: ${e.message}`, embeds: [], components: [] }).catch(() => {});
+    }
+  }
+
   // /close
   if (interaction.isChatInputCommand() && interaction.commandName === 'close') {
     return closeTicket(interaction, interaction.channel);
