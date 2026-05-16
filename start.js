@@ -1,15 +1,16 @@
 const { spawn } = require('child_process');
 
-// Jar and config live in /app/lavalink (image layer, safe from volume mounts).
-// CWD is /lavalink so Lavalink writes plugins/oauth tokens there —
-// that path can be a Railway Volume for persistence without overwriting the jar.
+// Jar lives in /app/lavalink (image layer, safe from volume mounts).
+// CWD is /lavalink — that path can be a Railway Volume so OAuth tokens and
+// plugin cache persist across redeploys. Copy config there before starting
+// so Lavalink finds it in its CWD without any --spring.config.location flag.
 const fs = require('fs');
 fs.mkdirSync('/lavalink', { recursive: true });
+fs.copyFileSync('/app/lavalink/application.yml', '/lavalink/application.yml');
 
 const lavalink = spawn(
   'java',
-  ['-Xmx256m', '-jar', '/app/lavalink/Lavalink.jar',
-   '--spring.config.location=/app/lavalink/application.yml'],
+  ['-Xmx256m', '-jar', '/app/lavalink/Lavalink.jar'],
   {
     cwd: '/lavalink',
     stdio: ['ignore', 'pipe', 'pipe'],
