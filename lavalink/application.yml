@@ -29,9 +29,9 @@ plugins:
     allowDirectPlaylistIds: true
     clients:
       - MUSIC
-      - ANDROID_LITE
-      - TVHTML5EMBEDDED
-      - WEB
+      - ANDROID
+      - IOS
+      - TVHTML5_SIMPLY
 
 logging:
   level:
