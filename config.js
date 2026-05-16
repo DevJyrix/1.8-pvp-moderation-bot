@@ -1,5 +1,7 @@
 require('dotenv').config();
 
+const TRIAL_STAFF_ROLE_ID = process.env.TRIAL_STAFF_ROLE_ID || '1500919945611972729';
+
 const ROLES = {
   GAME_STAFF:    { id: process.env.GAME_STAFF_ROLE_ID,    level: 1 },
   DISCORD_STAFF: { id: process.env.DISCORD_STAFF_ROLE_ID, level: 2 },
@@ -26,8 +28,15 @@ function isAdmin(member)  { return getMemberLevel(member) >= 4; }
 function isSenior(member) { return getMemberLevel(member) >= 3; }
 function canAction(actor, target) { return getMemberLevel(actor) > getMemberLevel(target); }
 function allStaffRoleIds() { return Object.values(ROLES).map(r => r.id).filter(Boolean); }
+function isTrial(member) {
+  return getMemberLevel(member) === 0 && member.roles.cache.has(TRIAL_STAFF_ROLE_ID);
+}
+function isAtLeastTrial(member) {
+  return isStaff(member) || isTrial(member);
+}
 
 module.exports = {
+  TRIAL_STAFF_ROLE_ID,
   DISCORD_TOKEN:              process.env.DISCORD_TOKEN,
   TICKET_CHANNEL_ID:          process.env.TICKET_CHANNEL_ID,
   // Per-type ticket channel IDs (each type has its own channel with a button)
@@ -84,5 +93,5 @@ module.exports = {
   ANTI_RAID_LOCKOUT: parseInt(process.env.ANTI_RAID_LOCKOUT_MINUTES    || '10'),
   ROLES,
   getMemberLevel, getRoleName, canUseGameCommands, canUseDiscordCommands,
-  isStaff, isAdmin, isSenior, canAction, allStaffRoleIds,
+  isStaff, isAdmin, isSenior, isTrial, isAtLeastTrial, canAction, allStaffRoleIds,
 };

@@ -112,6 +112,17 @@ function buildPerms(guild, creatorId, minimumLevel = 1) {
   const staffIds = Object.values(cfg.ROLES)
     .filter(r => r.level >= minimumLevel && r.id)
     .map(r => r.id);
+
+  const trialPerms = minimumLevel <= 1 && cfg.TRIAL_STAFF_ROLE_ID ? [{
+    id: cfg.TRIAL_STAFF_ROLE_ID,
+    allow: [
+      PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages,
+      PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.AttachFiles,
+      PermissionFlagsBits.EmbedLinks, PermissionFlagsBits.UseExternalEmojis,
+      PermissionFlagsBits.AddReactions,
+    ],
+  }] : [];
+
   return [
     { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
     {
@@ -132,6 +143,7 @@ function buildPerms(guild, creatorId, minimumLevel = 1) {
         PermissionFlagsBits.UseExternalEmojis, PermissionFlagsBits.AddReactions,
       ],
     })),
+    ...trialPerms,
     {
       id: guild.members.me.id,
       allow: [
@@ -850,12 +862,18 @@ async function closeTicket(interaction, channel) {
   const creatorId = meta?.creatorId || _creatorFromTopic(channel);
   const isStaff   = cfg.isStaff(interaction.member);
   const isCreator = creatorId && interaction.user.id === creatorId;
+  const isTrial   = cfg.isTrial(interaction.member);
 
-  if (!isStaff && !isCreator) {
+  if (!isStaff && !isTrial && !isCreator) {
     return interaction.reply({ content: 'Only the ticket creator or staff can close this.', flags: 64 });
   }
 
-  // Creator closing their own ticket — no reason prompt, no DM to self
+  // Trial staff cannot close tickets unless they created it
+  if (isTrial && !isStaff && !isCreator) {
+    return interaction.reply({ content: 'Trial staff cannot close tickets. Only the ticket creator or full staff can do that.', flags: 64 });
+  }
+
+  // Creator (or trial staff closing their own) closing — no reason prompt, no DM to self
   if (!isStaff) {
     await interaction.reply({ content: 'Closing your ticket...' });
     recordAction(interaction.user.id, 'TICKET_CLOSED', `#${channel.name}`);

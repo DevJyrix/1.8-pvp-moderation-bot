@@ -174,6 +174,11 @@ const slashDefs = [
         { name: 'All',            value: 'all'           },
       )
     ),
+  new SlashCommandBuilder()
+    .setName('trialstaff')
+    .setDescription('Give a user the Trial Staff role and DM them an onboarding guide (Admin only)')
+    .setDefaultMemberPermissions(0)
+    .addUserOption(o => o.setName('user').setDescription('User to promote to Trial Staff').setRequired(true)),
 ].map(c => c.toJSON());
 
 // ─── Ready ─────────────────────────────────────────────────────────────────────
@@ -196,6 +201,8 @@ client.once(Events.ClientReady, async () => {
     await rest.put(Routes.applicationCommands(client.user.id), { body: slashDefs });
     console.log('  Slash commands registered');
   } catch (e) { console.error('Slash registration failed:', e.message); }
+
+  music.init(client);
 });
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -427,9 +434,9 @@ client.on('messageCreate', async (msg) => {
   const cmd    = args[0]?.toLowerCase();
   if (!cmd?.startsWith('.')) return;
 
-  // ── .checkstats / .stats / .check — all staff
+  // ── .checkstats / .stats / .check — all staff + trial staff
   if (cmd === '.checkstats' || cmd === '.stats' || cmd === '.check') {
-    if (!config.isStaff(member)) return;
+    if (!config.isAtLeastTrial(member)) return;
     if (!args[1]) return msg.reply('Usage: `.checkstats <RobloxUsername or UserID>`');
     const loading = await msg.reply('Fetching...');
     try {
@@ -606,10 +613,15 @@ client.on('messageCreate', async (msg) => {
     return;
   }
 
-  // ── .modstats
+  // ── .modstats — staff + trial (own only); senior+ can view others; supports user ID
   if (cmd === '.modstats') {
-    if (!config.isStaff(member)) return;
-    const target = msg.mentions.members.first() || member;
+    if (!config.isAtLeastTrial(member)) return;
+    let target = msg.mentions.members.first();
+    if (!target && args[1] && /^\d{16,20}$/.test(args[1])) {
+      target = await msg.guild.members.fetch(args[1]).catch(() => null);
+      if (!target) return msg.reply(`No member found with ID \`${args[1]}\`.`);
+    }
+    target = target || member;
     if (target.id !== msg.author.id && !config.isSenior(member)) {
       return msg.reply('You can only view your own stats. Senior Staff+ can view others.');
     }
@@ -913,7 +925,7 @@ client.on('messageCreate', async (msg) => {
 
   // ── .duty on/off  — toggle staff duty (controls ticket pings)
   if (cmd === '.duty') {
-    if (!config.isStaff(member)) return;
+    if (!config.isAtLeastTrial(member)) return;
     const cfg = require('./config');
     const dutyRoleId = cfg.STAFF_DUTY_ROLE_ID;
     if (!dutyRoleId) return msg.reply('No Staff Duty role configured. Add `STAFF_DUTY_ROLE_ID` to your .env file.');
@@ -956,7 +968,7 @@ client.on('messageCreate', async (msg) => {
 
   // ── .close — re-post the close button inside a ticket (for staff convenience)
   if (cmd === '.close') {
-    if (!config.isStaff(member)) return;
+    if (!config.isAtLeastTrial(member)) return;
     const meta = loadTicketMeta(msg.channel.id);
     if (!meta) return msg.reply({ content: 'This command can only be used inside a ticket channel.', flags: 64 });
     const closeRow = new ActionRowBuilder().addComponents(
@@ -969,7 +981,7 @@ client.on('messageCreate', async (msg) => {
 
   // ── .escalate <senior|admin> [reason]  — move ticket to a restricted category
   if (cmd === '.escalate') {
-    if (!config.isStaff(member)) return;
+    if (!config.isAtLeastTrial(member)) return;
     const tier   = (args[1] || '').toLowerCase();
     const reason = args.slice(2).join(' ') || 'No reason provided';
 
@@ -1469,7 +1481,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   // /infractions
   if (interaction.isChatInputCommand() && interaction.commandName === 'infractions') {
-    if (!config.isStaff(interaction.member)) return interaction.reply({ content: 'Staff only.', flags: 64 });
+    if (!config.isAtLeastTrial(interaction.member)) return interaction.reply({ content: 'Staff only.', flags: 64 });
     await interaction.deferReply();
     try {
       const targetUser   = interaction.options.getUser('user');
@@ -1549,6 +1561,88 @@ client.on(Events.InteractionCreate, async (interaction) => {
         { name: 'Removed',    value: `${count} warn/note entry(ies)`, inline: true },
       ).setTimestamp()] });
     await logAction(client, { action: 'NOTE', target: { username: targetUser.username }, staff: { tag: interaction.user.tag, id: interaction.user.id }, extra: `Cleared ${count} warn/note entries` });
+    return;
+  }
+
+  // /trialstaff — give Trial Staff role + DM onboarding guide (Admin only)
+  if (interaction.isChatInputCommand() && interaction.commandName === 'trialstaff') {
+    if (!config.isAdmin(interaction.member)) return interaction.reply({ content: 'Admin only.', flags: 64 });
+    const target = interaction.options.getMember('user');
+    if (!target) return interaction.reply({ content: 'User not found.', flags: 64 });
+    const trialRole = await interaction.guild.roles.fetch(config.TRIAL_STAFF_ROLE_ID).catch(() => null);
+    if (!trialRole) return interaction.reply({ content: 'Trial Staff role not found. Check the role ID in config.', flags: 64 });
+    try {
+      await target.roles.add(trialRole, `Trial Staff promotion by ${interaction.user.tag}`);
+      const onboarding = new EmbedBuilder()
+        .setColor(0x5865F2)
+        .setTitle('Welcome to the 1.8 Arena Staff Team — Trial Staff Guide')
+        .setDescription(`Congratulations, ${target.user.username}! You've been given **Trial Staff** in 1.8 Arena. Here's everything you need to know.`)
+        .addFields(
+          {
+            name: '📋  What You Can Do',
+            value: [
+              '**View tickets** — Game Reports (`gr-`), Discord Reports (`dr-`), and Appeals (`appeal-`) are visible to you.',
+              '**`.check <roblox user>`** — Look up a player\'s game stats and ban status.',
+              '**`.stats <roblox user>`** — Same as `.check`. Accepts Roblox username or user ID.',
+              '**`.duty on/off`** — Toggle yourself on/off duty. When on duty you\'ll be pinged for new tickets.',
+              '**`.escalate senior [reason]`** — Move a ticket to Senior Staff if it\'s above your level.',
+              '**`.modstats`** — View your own moderation action stats.',
+              '**`/close`** — Close a ticket **you created** (not one made by someone else).',
+            ].join('\n'),
+          },
+          {
+            name: '🚫  What You Cannot Do',
+            value: [
+              '**Close other people\'s tickets** — Only full staff (Game Staff+) can close tickets.',
+              '**Ban, kick, or mute** — Discord mod actions require Discord Staff role or above.',
+              '**Game ban or kick** — Requires Game Staff role or above.',
+              '**Escalate to Admin tier** — Only Admins can move tickets to the Admin category.',
+            ].join('\n'),
+          },
+          {
+            name: '🎫  Ticket Types Explained',
+            value: [
+              '**Game Report (`gr-username`)** — Player reporting someone for breaking in-game rules (exploiting, cheating, toxicity, etc.).',
+              '**Discord Report (`dr-username`)** — User reporting someone for breaking Discord rules (harassment, spam, etc.).',
+              '**Appeal (`appeal-username`)** — Player appealing a game ban or Discord ban.',
+              '**Content Creator / Art / Business** — Applications and partnerships (handled by Senior Staff+).',
+            ].join('\n'),
+          },
+          {
+            name: '📝  What "gr-username" Means',
+            value: 'Ticket channels are named after the **ticket creator\'s Roblox username** (linked via RoVer). So `gr-0_1uv` means the game report was opened by the Roblox player `0_1uv`. The username in the channel name is always the *reporter*, not the reported player.',
+          },
+          {
+            name: '💡  Tips',
+            value: [
+              'Always be professional in tickets — players can see everything you type.',
+              'If a ticket is outside your authority (e.g. needs a ban), use `.escalate senior` or tag a full staff member.',
+              'Use `.duty on` when you\'re available to handle tickets so you get pinged.',
+              'Use `.duty off` when you\'re done for the day.',
+            ].join('\n'),
+          },
+          {
+            name: '📞  Need Help?',
+            value: 'If you\'re unsure about anything, tag a Senior Staff or Admin. Trial Staff is a learning period — ask questions rather than making mistakes.',
+          },
+        )
+        .setFooter({ text: '1.8 Arena Staff Team' })
+        .setTimestamp();
+      try {
+        await target.send({ embeds: [onboarding] });
+      } catch {
+        // DMs closed — not a fatal error
+      }
+      await interaction.reply({ embeds: [new EmbedBuilder()
+        .setColor(0x57F287)
+        .setTitle('Trial Staff Promoted')
+        .addFields(
+          { name: 'User',       value: `${target.user.tag} (<@${target.id}>)`, inline: true },
+          { name: 'Promoted by', value: interaction.user.tag, inline: true },
+        )
+        .setDescription('The user has been given the Trial Staff role and sent an onboarding DM.')
+        .setTimestamp()] });
+    } catch (e) { return interaction.reply({ content: `Error: ${e.message}`, flags: 64 }); }
     return;
   }
 
