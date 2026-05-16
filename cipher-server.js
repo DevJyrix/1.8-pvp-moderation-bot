@@ -17,11 +17,15 @@ const scriptCache = new Map();
 // ── HTTP fetch ────────────────────────────────────────────────────────────────
 function normalizePlayerUrl(raw) {
   if (!raw) return raw;
-  if (raw.startsWith('/')) {
-    const full = 'https://www.youtube.com' + raw;
-    console.log(`[cipher] normalized player URL: ${raw.slice(0, 60)} → ${full.slice(0, 80)}`);
-    return full;
-  }
+  // Prepend base if relative
+  if (raw.startsWith('/')) raw = 'https://www.youtube.com' + raw;
+  // player_embed.vflset does NOT contain cipher functions — swap to player_ias.vflset
+  // which has the same hash but includes the sig/n decode functions.
+  const before = raw;
+  raw = raw.replace('/player_embed.vflset/', '/player_ias.vflset/');
+  // Normalize locale so cache key is stable and we always get the same JS
+  raw = raw.replace(/\/[a-z]{2}_[A-Z]{2}\/base\.js$/, '/en_US/base.js');
+  if (raw !== before) console.log(`[cipher] remapped player URL:\n  from: ${before}\n    to: ${raw}`);
   return raw;
 }
 
