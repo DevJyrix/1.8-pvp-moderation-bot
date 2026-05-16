@@ -1,12 +1,42 @@
 const { spawn } = require('child_process');
-
-// Jar lives in /app/lavalink (image layer, safe from volume mounts).
-// CWD is /lavalink — that path can be a Railway Volume so OAuth tokens and
-// plugin cache persist across redeploys. Copy config there before starting
-// so Lavalink finds it in its CWD without any --spring.config.location flag.
 const fs = require('fs');
+
 fs.mkdirSync('/lavalink', { recursive: true });
 fs.copyFileSync('/app/lavalink/application.yml', '/lavalink/application.yml');
+
+if (process.env.YOUTUBE_REFRESH_TOKEN) {
+  console.log('[OAuth] YOUTUBE_REFRESH_TOKEN is set — OAuth pre-configured, no device code needed.');
+} else {
+  console.log('[OAuth] YOUTUBE_REFRESH_TOKEN not set. A device code will appear below.');
+  console.log('[OAuth] Go to https://www.google.com/device and enter it (use a burner Google account).');
+  console.log('[OAuth] After you authorize, this script will print the token — copy it to Railway Variables as YOUTUBE_REFRESH_TOKEN.');
+  watchForToken();
+}
+
+function watchForToken() {
+  const tokenPath = '/lavalink/oauth_tokens.json';
+  let printed = null;
+  setInterval(() => {
+    try {
+      const raw = fs.readFileSync(tokenPath, 'utf8');
+      const data = JSON.parse(raw);
+      // find a value that looks like a Google refresh token
+      const token = Object.values(data).find(v => typeof v === 'string' && v.startsWith('1//'));
+      if (token && token !== printed) {
+        printed = token;
+        const line = '='.repeat(72);
+        console.log('\n' + line);
+        console.log('[OAuth] TOKEN SAVED — do this ONE TIME in Railway → Variables:');
+        console.log(`  Name:  YOUTUBE_REFRESH_TOKEN`);
+        console.log(`  Value: ${token}`);
+        console.log('[OAuth] Railway will redeploy automatically. Music will work forever after.');
+        console.log(line + '\n');
+      }
+    } catch {
+      // file not written yet — keep polling
+    }
+  }, 3000);
+}
 
 const lavalink = spawn(
   'java',

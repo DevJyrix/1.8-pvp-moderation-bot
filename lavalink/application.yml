@@ -28,13 +28,12 @@ plugins:
     allowDirectVideoIds: true
     allowDirectPlaylistIds: true
     clients:
-      - MUSIC
-      - TVHTML5_SIMPLY
-      - MWEB
       - TV
+      - MUSIC
     oauth:
       enabled: true
       skipInitialization: false
+      refreshToken: "${YOUTUBE_REFRESH_TOKEN:}"
 
 logging:
   level:
