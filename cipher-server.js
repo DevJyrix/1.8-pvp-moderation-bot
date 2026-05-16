@@ -15,6 +15,13 @@ const PORT = 8001;
 const scriptCache = new Map();
 
 // ── HTTP fetch ────────────────────────────────────────────────────────────────
+function normalizePlayerUrl(raw) {
+  if (!raw) return raw;
+  // youtube-source may send a bare path like /s/player/2d01abf7/...
+  if (raw.startsWith('/')) return 'https://www.youtube.com' + raw;
+  return raw;
+}
+
 function fetchText(rawUrl) {
   return new Promise((resolve, reject) => {
     try {
@@ -42,6 +49,7 @@ function fetchText(rawUrl) {
 }
 
 async function getScript(playerUrl) {
+  playerUrl = normalizePlayerUrl(playerUrl);
   if (scriptCache.has(playerUrl)) return scriptCache.get(playerUrl);
   const text = await fetchText(playerUrl);
   scriptCache.set(playerUrl, text);
