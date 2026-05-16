@@ -29,9 +29,12 @@ plugins:
     allowDirectPlaylistIds: true
     clients:
       - MUSIC
-      - ANDROID
-      - IOS
       - TVHTML5_SIMPLY
+      - MWEB
+      - TV
+    oauth:
+      enabled: true
+      skipInitialization: false
 
 logging:
   level:
