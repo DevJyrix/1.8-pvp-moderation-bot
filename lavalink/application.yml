@@ -4,8 +4,9 @@ server:
 
 lavalink:
   plugins:
-    - dependency: "dev.lavalink.youtube:youtube-plugin:1.18.1"
-      snapshot: false
+    - dependency: "dev.lavalink.youtube:youtube-plugin:9d4dbeeb51f16d53078486d69d27654d4acfa7fb"
+      snapshot: true
+      repository: "https://maven.lavalink.dev/snapshots"
   server:
     password: "youshallnotpass"
     sources:
@@ -34,6 +35,9 @@ plugins:
       enabled: true
       skipInitialization: false
       refreshToken: "${YOUTUBE_REFRESH_TOKEN:}"
+    remoteCipher:
+      url: "http://localhost:8001"
+      password: ""
 
 logging:
   level:

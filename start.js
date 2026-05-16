@@ -4,6 +4,10 @@ const fs = require('fs');
 fs.mkdirSync('/lavalink', { recursive: true });
 fs.copyFileSync('/app/lavalink/application.yml', '/lavalink/application.yml');
 
+// Start the Node.js cipher resolver so Lavalink can offload
+// YouTube player script decryption to us instead of using its Java regex.
+require('./cipher-server')();
+
 if (process.env.YOUTUBE_REFRESH_TOKEN) {
   console.log('[OAuth] YOUTUBE_REFRESH_TOKEN is set — OAuth pre-configured, no device code needed.');
 } else {
