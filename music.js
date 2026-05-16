@@ -1,36 +1,16 @@
-/**
- * music.js — YouTube audio player via Lavalink
- * Uses Shoukaku (Lavalink v4 client).
- *
- * Self-hosted Lavalink (recommended for Railway):
- *   Set LAVALINK_HOST, LAVALINK_PORT (default 2333), LAVALINK_AUTH (default youshallnotpass)
- *   on the bot service in Railway to point at your Lavalink service.
- *
- * Call music.init(client) in your Discord ready handler.
- */
+// music.js — YouTube audio via bundled Lavalink (started by start.js)
 
 const { Shoukaku, Connectors, LoadType } = require('shoukaku');
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
 
-// ── Node config ───────────────────────────────────────────���───────────────────
+// ── Node config ──────────────────────────────────────────────────────────────
 function buildNodes() {
-  if (process.env.LAVALINK_HOST) {
-    return [{
-      name:   'private',
-      url:    `${process.env.LAVALINK_HOST}:${process.env.LAVALINK_PORT || '2333'}`,
-      auth:   process.env.LAVALINK_AUTH || 'youshallnotpass',
-      secure: process.env.LAVALINK_SECURE === 'true',
-    }];
-  }
-  // Public fallback nodes — may be unreliable on cloud/datacenter IPs.
-  // For guaranteed uptime, self-host Lavalink (see lavalink/ folder in repo).
-  return [
-    { name: 'lava1', url: 'lavalink4.devamop.in:80',       auth: 'DevamOP',  secure: false },
-    { name: 'lava2', url: 'lavalink.serenetia.com:443',     auth: 'HolyShit', secure: true  },
-    { name: 'lava3', url: 'freelavalink.serenetia.com:80',  auth: 'HolyShit', secure: false },
-    { name: 'lava4', url: 'lavalink2.devamop.in:8830',      auth: 'DevamOP',  secure: false },
-    { name: 'lava5', url: 'lavalink.jirayu.net:13592',      auth: 'youshallnotpass', secure: false },
-  ];
+  return [{
+    name:   'lavalink',
+    url:    `${process.env.LAVALINK_HOST || 'localhost'}:${process.env.LAVALINK_PORT || '2333'}`,
+    auth:   process.env.LAVALINK_AUTH || 'youshallnotpass',
+    secure: process.env.LAVALINK_SECURE === 'true',
+  }];
 }
 
 // ── State ─────────────��─────────────────────────────────���─────────────────────
@@ -77,14 +57,9 @@ function init(discordClient) {
     console.warn(`[Lavalink] ${name} disconnected`);
   });
 
-  // After 30s, if nothing connected, warn loudly
   setTimeout(() => {
     if (nodeStatus.connected.size === 0) {
-      console.error(
-        '[Lavalink] No nodes connected after 30s. ' +
-        'Public nodes may be blocking Railway IPs. ' +
-        'Deploy the lavalink/ service on Railway and set LAVALINK_HOST on this service.'
-      );
+      console.error('[Lavalink] No nodes connected after 30s — check Lavalink startup logs.');
     }
   }, 30_000);
 }
@@ -93,15 +68,8 @@ function getNode() {
   const node = shoukaku?.getIdealNode();
   if (node) return node;
 
-  if (allFailed()) {
-    throw new Error(
-      'All Lavalink nodes failed to connect. ' +
-      'Public nodes block cloud/datacenter IPs. ' +
-      'You need to deploy your own Lavalink on Railway — ' +
-      'see the `lavalink/` folder in the repo for setup instructions.'
-    );
-  }
-  throw new Error('Music service is still connecting to Lavalink — please try again in a few seconds.');
+  if (allFailed()) throw new Error('Music service failed to start — check the logs.');
+  throw new Error('Music service is still starting up — please try again in a few seconds.');
 }
 
 // ── Helpers ──────��────────────────────────────────────────────────────────────
@@ -275,16 +243,8 @@ async function handlePlay(interaction) {
 
   // Give a meaningful status based on node connection state
   if (!shoukaku?.getIdealNode()) {
-    if (allFailed()) {
-      return interaction.editReply(
-        '**Music is unavailable** — all Lavalink nodes failed to connect.\n' +
-        'Public nodes block Railway/cloud IPs. You need to deploy your own Lavalink service:\n' +
-        '1. In Railway, **Add Service → GitHub Repo → same repo → Root Directory: `lavalink/`**\n' +
-        '2. On the bot service, add env var: `LAVALINK_HOST` = the internal domain of that service\n' +
-        '3. Also set `LAVALINK_PORT=2333` and `LAVALINK_AUTH=youshallnotpass`'
-      );
-    }
-    return interaction.editReply('Lavalink is still connecting — please try again in a few seconds.');
+    if (allFailed()) return interaction.editReply('Music service failed to start — check the bot logs.');
+    return interaction.editReply('Music service is still starting up — please try again in a few seconds.');
   }
 
   const isUrl = /^https?:\/\//i.test(query);
