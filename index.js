@@ -201,8 +201,6 @@ client.once(Events.ClientReady, async () => {
     await rest.put(Routes.applicationCommands(client.user.id), { body: slashDefs });
     console.log('  Slash commands registered');
   } catch (e) { console.error('Slash registration failed:', e.message); }
-
-  music.init(client);
 });
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -2338,4 +2336,5 @@ client.on(Events.ThreadCreate, async (thread, newlyCreated) => {
 client.on('error', err => console.error('[Discord Client Error]', err));
 process.on('unhandledRejection', (reason) => console.error('[Unhandled Rejection]', reason));
 
+music.init(client);
 client.login(config.DISCORD_TOKEN);
