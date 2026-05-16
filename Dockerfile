@@ -7,8 +7,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     default-jre-headless \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=lavalink /opt/Lavalink/Lavalink.jar /lavalink/Lavalink.jar
-COPY lavalink/application.yml /lavalink/application.yml
+COPY --from=lavalink /opt/Lavalink/Lavalink.jar /app/lavalink/Lavalink.jar
+COPY lavalink/application.yml /app/lavalink/application.yml
 
 WORKDIR /app
 COPY package*.json ./
