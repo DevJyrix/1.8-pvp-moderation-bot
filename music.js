@@ -86,7 +86,9 @@ function fmtDuration(secs) {
 async function resolveTopTracks(query, n = 5) {
   const node = getNode();
   const isUrl = /^https?:\/\//i.test(query);
-  const identifier = isUrl ? query : `ytsearch:${query}`;
+  // ytmsearch uses YouTube Music (WEB_REMIX client with OAuth) — bypasses the
+  // broken cipher that affects all regular youtube.com playback clients.
+  const identifier = isUrl ? query : `ytmsearch:${query}`;
 
   const result = await node.rest.resolve(identifier);
   if (!result || result.loadType === LoadType.EMPTY)
