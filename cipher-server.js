@@ -17,8 +17,11 @@ const scriptCache = new Map();
 // ── HTTP fetch ────────────────────────────────────────────────────────────────
 function normalizePlayerUrl(raw) {
   if (!raw) return raw;
-  // youtube-source may send a bare path like /s/player/2d01abf7/...
-  if (raw.startsWith('/')) return 'https://www.youtube.com' + raw;
+  if (raw.startsWith('/')) {
+    const full = 'https://www.youtube.com' + raw;
+    console.log(`[cipher] normalized player URL: ${raw.slice(0, 60)} → ${full.slice(0, 80)}`);
+    return full;
+  }
   return raw;
 }
 
@@ -51,7 +54,9 @@ function fetchText(rawUrl) {
 async function getScript(playerUrl) {
   playerUrl = normalizePlayerUrl(playerUrl);
   if (scriptCache.has(playerUrl)) return scriptCache.get(playerUrl);
+  console.log(`[cipher] fetching player script: ${playerUrl.slice(0, 80)}`);
   const text = await fetchText(playerUrl);
+  console.log(`[cipher] player script fetched: ${text.length} chars`);
   scriptCache.set(playerUrl, text);
   setTimeout(() => scriptCache.delete(playerUrl), 3_600_000);
   return text;
@@ -61,7 +66,6 @@ async function getScript(playerUrl) {
 function extractSts(script) {
   const m = script.match(/[,;{]signatureTimestamp[:\s]*(\d+)/);
   if (m) return m[1];
-  // fallback patterns
   const m2 = script.match(/signatureTimestamp:(\d+)/);
   if (m2) return m2[1];
   throw new Error('Cannot extract signatureTimestamp from player script');
@@ -78,35 +82,96 @@ function extractBody(src, openIdx) {
 }
 
 function extractSigFunction(src) {
-  // Scan for the unique pattern: a=a.split("") inside a short-named function
-  let offset = 0;
-  while (offset < src.length) {
-    const si = src.indexOf('a=a.split("")', offset);
-    if (si === -1) break;
+  // Collect all positions of .split("") for diagnostics and fallback scanning
+  const allSplitIdxs = [];
+  { let i = 0; while ((i = src.indexOf('.split("")', i)) !== -1) { allSplitIdxs.push(i); i++; } }
+  console.log(`[cipher] extractSigFunction: script ${src.length} chars, ${allSplitIdxs.length}× .split("")`);
 
-    // look at up to 400 chars before split to find the function declaration
-    const lookback = src.slice(Math.max(0, si - 400), si + 20);
-    // NAME=function(a){  or  NAME=function(a){a=  or  NAME=function(a){var a=
-    const m = lookback.match(/([a-zA-Z$_][\w$]{0,4})=function\([a-zA-Z$_]+\)\{(?:[a-zA-Z$_]+=)?(?:[a-zA-Z$_]+\.)?[a-zA-Z$_]+\.split\(""\)/);
-    if (m) {
-      const name = m[1];
-      const matchInFull = src.lastIndexOf(m[0], si + 20);
-      if (matchInFull !== -1) {
-        const bodyStart = src.indexOf('{', matchInFull);
-        const body = extractBody(src, bodyStart);
-        if (body.includes('.join("")')) {
-          return { name, body, decl: `var ${name}=function(a)${body}` };
+  // Pass 1: look for known split-assignment patterns, any function name length
+  // Handles: a=a.split(""), var b=a.split(""), b=a.split("")
+  const splitPats = ['a=a.split("")', 'var b=a.split("")', 'b=a.split("")'];
+  for (const splitPat of splitPats) {
+    let offset = 0;
+    while (offset < src.length) {
+      const si = src.indexOf(splitPat, offset);
+      if (si === -1) break;
+
+      // Search up to 600 chars back for a function declaration
+      const lookback = src.slice(Math.max(0, si - 600), si + splitPat.length + 5);
+      // No {0,4} name-length cap — match any identifier
+      const m = lookback.match(/([a-zA-Z$_][\w$]*)=function\([a-zA-Z$_]+\)\{(?:var\s+)?(?:[a-zA-Z$_]+=)?(?:[a-zA-Z$_]+\.)?[a-zA-Z$_]+\.split\(""\)/);
+      if (m) {
+        const name    = m[1];
+        const realIdx = src.lastIndexOf(name + '=function(', si);
+        if (realIdx !== -1) {
+          const bodyStart = src.indexOf('{', realIdx);
+          let body;
+          try { body = extractBody(src, bodyStart); } catch { offset = si + 1; continue; }
+          if (body.includes('.join("")')) {
+            console.log(`[cipher] sig fn "${name}" via splitPat "${splitPat}", body ${body.length} chars`);
+            return { name, body, decl: `var ${name}=function(a)${body}` };
+          }
         }
       }
+      offset = si + 1;
     }
-    offset = si + 1;
+  }
+
+  // Pass 2: fallback — for every .split("") occurrence, look backward 700 chars for nearest =function(
+  for (const si of allSplitIdxs) {
+    const region = src.slice(Math.max(0, si - 700), si + 15);
+    const m = region.match(/([a-zA-Z$_][\w$]*)=function\([a-zA-Z$_]+\)\{/);
+    if (!m) continue;
+    const name    = m[1];
+    const realIdx = src.lastIndexOf(name + '=function(', si);
+    if (realIdx === -1) continue;
+    const bodyStart = src.indexOf('{', realIdx);
+    let body;
+    try { body = extractBody(src, bodyStart); } catch { continue; }
+    if (body.includes('.split("")') && body.includes('.join("")')) {
+      console.log(`[cipher] sig fn "${name}" via fallback scan, body ${body.length} chars`);
+      return { name, body, decl: `var ${name}=function(a)${body}` };
+    }
+  }
+
+  // Pass 3: standalone function declarations: function NAME(a){a=a.split("")...}
+  for (const splitPat of splitPats) {
+    let offset = 0;
+    while (offset < src.length) {
+      const si = src.indexOf(splitPat, offset);
+      if (si === -1) break;
+      const lookback = src.slice(Math.max(0, si - 600), si + splitPat.length + 5);
+      const m = lookback.match(/function\s+([a-zA-Z$_][\w$]*)\s*\([a-zA-Z$_]+\)\s*\{/);
+      if (m) {
+        const name    = m[1];
+        const realIdx = src.lastIndexOf('function ' + name, si);
+        if (realIdx !== -1) {
+          const bodyStart = src.indexOf('{', realIdx);
+          let body;
+          try { body = extractBody(src, bodyStart); } catch { offset = si + 1; continue; }
+          if (body.includes('.join("")')) {
+            console.log(`[cipher] sig fn "${name}" via standalone decl, body ${body.length} chars`);
+            return { name, body, decl: `var ${name}=function(a)${body}` };
+          }
+        }
+      }
+      offset = si + 1;
+    }
+  }
+
+  // Diagnostic dump — log context around each .split("") to help identify the pattern
+  console.error(`[cipher] FAILED to find sig fn. Script ${src.length} chars, ${allSplitIdxs.length}× .split("")`);
+  for (let k = 0; k < Math.min(6, allSplitIdxs.length); k++) {
+    const p   = allSplitIdxs[k];
+    const ctx = src.slice(Math.max(0, p - 350), p + 80).replace(/\n/g, '↵');
+    console.error(`[cipher]  split[${k}] @${p}: …${ctx}…`);
   }
   throw new Error('Cannot find sig function (split/join pattern absent)');
 }
 
 function extractHelperObject(src, sigBody) {
-  // e.g.  ;Abc.de(a,12);  → helper name is Abc
-  const hm = sigBody.match(/;([a-zA-Z$_][\w$]{0,4})\.[a-zA-Z$_][\w$]*\(a/);
+  // e.g.  ;Abc.de(a,12);  — no name-length cap
+  const hm = sigBody.match(/;([a-zA-Z$_][\w$]*)\.[a-zA-Z$_][\w$]*\(a/);
   if (!hm) throw new Error('Cannot find helper object name in sig body:\n' + sigBody.slice(0, 200));
   const name = hm[1];
 
@@ -118,17 +183,18 @@ function extractHelperObject(src, sigBody) {
     if (idx === -1) continue;
     const bodyStart = src.indexOf('{', idx);
     const body = extractBody(src, bodyStart);
+    console.log(`[cipher] helper obj "${name}", body ${body.length} chars`);
     return { name, decl: `var ${name}=${body}` };
   }
   throw new Error('Cannot find helper object: ' + name);
 }
 
 function extractNFunction(src) {
-  // n-param throttle function — looks for: NAME=function(a){...enhanced array ops...return a.join("")}
-  // Try several patterns
+  // n-param throttle function — no name-length cap, extra split patterns
   const patterns = [
-    /([a-zA-Z$_][\w$]{0,4})=function\(a\)\{var b=a\.split\(""\)/,
-    /([a-zA-Z$_][\w$]{0,4})=function\(a\)\{a=a\.split\(""\)/,
+    /([a-zA-Z$_][\w$]*)=function\(a\)\{var b=a\.split\(""\)/,
+    /([a-zA-Z$_][\w$]*)=function\(a\)\{a=a\.split\(""\)/,
+    /([a-zA-Z$_][\w$]*)=function\(a\)\{b=a\.split\(""\)/,
   ];
   for (const pat of patterns) {
     const m = src.match(pat);
@@ -138,9 +204,11 @@ function extractNFunction(src) {
     const bodyStart = src.indexOf('{', idx);
     const body = extractBody(src, bodyStart);
     if (body.includes('.join("")') && body.length > 200) {
+      console.log(`[cipher] n-fn "${name}" via "${pat.source.slice(0,40)}", body ${body.length} chars`);
       return { name, decl: `var ${name}=function(a)${body}` };
     }
   }
+  console.warn('[cipher] n-fn not found — stream may be throttled');
   return null;
 }
 
@@ -157,7 +225,7 @@ async function decryptSignature(playerUrl, encSig) {
 async function decryptN(playerUrl, nVal) {
   const script = await getScript(playerUrl);
   const nFn    = extractNFunction(script);
-  if (!nFn) return nVal; // can't decrypt → return as-is (stream just throttled)
+  if (!nFn) return nVal;
   const ctx  = { n: nVal };
   return vm.runInNewContext(`${nFn.decl};\n${nFn.name}(n)`, ctx, { timeout: 5000 });
 }
@@ -187,22 +255,27 @@ module.exports = function startCipherServer() {
       if (req.url.startsWith('/get_sts')) {
         const { player_url } = parsed;
         if (!player_url) { send(400, { error: 'missing player_url' }); return; }
+        console.log(`[cipher] GET_STS player_url=${player_url.slice(0, 70)}`);
         const script = await getScript(player_url);
         const sts    = extractSts(script);
+        console.log(`[cipher] GET_STS → sts=${sts}`);
         send(200, { sts });
 
       // ── POST /decrypt_signature ────────────────────────────────────────────
       } else if (req.url.startsWith('/decrypt_signature')) {
         const { player_url, encrypted_signature, n_param } = parsed;
         if (!player_url || !encrypted_signature) { send(400, { error: 'missing fields' }); return; }
+        console.log(`[cipher] DECRYPT_SIG player_url=${player_url.slice(0, 70)}`);
         const decSig = await decryptSignature(player_url, encrypted_signature);
         const decN   = n_param ? await decryptN(player_url, n_param) : null;
+        console.log(`[cipher] DECRYPT_SIG → ok, n=${decN !== null ? 'decrypted' : 'none'}`);
         send(200, { decrypted_signature: decSig, decrypted_n_sig: decN });
 
       // ── POST /resolve_url ──────────────────────────────────────────────────
       } else if (req.url.startsWith('/resolve_url')) {
         const { stream_url, player_url, encrypted_signature, signature_key, n_param } = parsed;
         if (!player_url || !encrypted_signature) { send(400, { error: 'missing fields' }); return; }
+        console.log(`[cipher] RESOLVE_URL player_url=${player_url.slice(0, 70)}`);
 
         const decSig = await decryptSignature(player_url, encrypted_signature);
         const u      = new URL(stream_url);
@@ -213,9 +286,12 @@ module.exports = function startCipherServer() {
           try {
             const decN = await decryptN(player_url, nVal);
             u.searchParams.set('n', decN);
-          } catch { /* non-fatal */ }
+          } catch (ne) {
+            console.warn(`[cipher] n-param decrypt failed (non-fatal): ${ne.message}`);
+          }
         }
 
+        console.log(`[cipher] RESOLVE_URL → ok`);
         send(200, { resolved_url: u.toString() });
 
       } else {
