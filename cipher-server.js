@@ -1,8 +1,10 @@
-// cipher-server.js
-// Resolves YouTube stream signature ciphers that Java regex can't parse.
-// youtube-source sends POST /resolve_url with cipher data; we execute the
-// player JS in Node.js's vm sandbox (which handles any obfuscation) and
-// return the playable URL.
+// cipher-server.js — YouTube cipher resolver compatible with youtube-source remoteCipher.
+// Implements the yt-cipher API:  POST /get_sts  POST /decrypt_signature  POST /resolve_url
+//
+// youtube-source's RemoteCipherManager calls:
+//   1. POST /get_sts              → extract signatureTimestamp from player JS
+//   2. POST /decrypt_signature    → decrypt sig + n-param using player JS cipher functions
+//   3. POST /resolve_url          → full resolution (sig + n) applied to stream URL
 
 const http  = require('http');
 const https = require('https');
@@ -12,43 +14,52 @@ const { URL } = require('url');
 const PORT = 8001;
 const scriptCache = new Map();
 
-// ── fetch helper ──────────────────────────────────────────────────────────────
-function fetch(rawUrl) {
+// ── HTTP fetch ────────────────────────────────────────────────────────────────
+function fetchText(rawUrl) {
   return new Promise((resolve, reject) => {
-    const parsed = new URL(rawUrl);
-    const mod = parsed.protocol === 'https:' ? https : http;
-    const opts = {
-      hostname: parsed.hostname,
-      path: parsed.pathname + parsed.search,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36',
-        'Accept-Language': 'en-US,en;q=0.9',
-      },
-    };
-    const req = mod.get(opts, res => {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return resolve(fetch(res.headers.location));
-      }
-      let data = '';
-      res.on('data', c => data += c);
-      res.on('end', () => resolve(data));
-      res.on('error', reject);
-    });
-    req.on('error', reject);
-    req.setTimeout(15000, () => { req.destroy(); reject(new Error('timeout')); });
+    try {
+      const parsed = new URL(rawUrl);
+      const mod  = parsed.protocol === 'https:' ? https : http;
+      const req  = mod.get(rawUrl, {
+        headers: {
+          'User-Agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124',
+          'Accept-Language': 'en-US,en;q=0.9',
+        },
+      }, res => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location)
+          return resolve(fetchText(res.headers.location));
+        if (res.statusCode >= 400)
+          return reject(new Error(`HTTP ${res.statusCode} fetching ${rawUrl}`));
+        let data = '';
+        res.on('data', c => data += c);
+        res.on('end', () => resolve(data));
+        res.on('error', reject);
+      });
+      req.on('error', reject);
+      req.setTimeout(20000, () => { req.destroy(); reject(new Error('timeout')); });
+    } catch (e) { reject(e); }
   });
 }
 
 async function getScript(playerUrl) {
   if (scriptCache.has(playerUrl)) return scriptCache.get(playerUrl);
-  const text = await fetch(playerUrl);
+  const text = await fetchText(playerUrl);
   scriptCache.set(playerUrl, text);
   setTimeout(() => scriptCache.delete(playerUrl), 3_600_000);
   return text;
 }
 
-// ── cipher extraction ─────────────────────────────────────────────────────────
-// Walk brackets to extract a complete JS function body starting at openIdx.
+// ── STS extraction ────────────────────────────────────────────────────────────
+function extractSts(script) {
+  const m = script.match(/[,;{]signatureTimestamp[:\s]*(\d+)/);
+  if (m) return m[1];
+  // fallback patterns
+  const m2 = script.match(/signatureTimestamp:(\d+)/);
+  if (m2) return m2[1];
+  throw new Error('Cannot extract signatureTimestamp from player script');
+}
+
+// ── Cipher extraction ─────────────────────────────────────────────────────────
 function extractBody(src, openIdx) {
   let depth = 0;
   for (let i = openIdx; i < src.length; i++) {
@@ -59,41 +70,42 @@ function extractBody(src, openIdx) {
 }
 
 function extractSigFunction(src) {
-  // Look for the pattern split("")...join("") — any variable names.
-  // We scan for split("") then walk backwards to the function declaration.
+  // Scan for the unique pattern: a=a.split("") inside a short-named function
   let offset = 0;
   while (offset < src.length) {
     const si = src.indexOf('a=a.split("")', offset);
     if (si === -1) break;
 
-    // Walk back to find NAME=function(a){ or function NAME(a){
-    const lookback = src.slice(Math.max(0, si - 300), si + 50);
-    const m = lookback.match(/([a-zA-Z$_][\w$]{0,3})=function\(a\)\{(?:a=)*a\.split\(""\)/);
+    // look at up to 400 chars before split to find the function declaration
+    const lookback = src.slice(Math.max(0, si - 400), si + 20);
+    // NAME=function(a){  or  NAME=function(a){a=  or  NAME=function(a){var a=
+    const m = lookback.match(/([a-zA-Z$_][\w$]{0,4})=function\([a-zA-Z$_]+\)\{(?:[a-zA-Z$_]+=)?(?:[a-zA-Z$_]+\.)?[a-zA-Z$_]+\.split\(""\)/);
     if (m) {
       const name = m[1];
-      // Find the real position of the match in src
-      const matchStart = src.lastIndexOf(m[0], si);
-      if (matchStart === -1) { offset = si + 1; continue; }
-      const bodyStart = src.indexOf('{', matchStart);
-      const body = extractBody(src, bodyStart);
-      if (body.includes('.join("")')) return { name, body, decl: `var ${name}=function(a)${body}` };
+      const matchInFull = src.lastIndexOf(m[0], si + 20);
+      if (matchInFull !== -1) {
+        const bodyStart = src.indexOf('{', matchInFull);
+        const body = extractBody(src, bodyStart);
+        if (body.includes('.join("")')) {
+          return { name, body, decl: `var ${name}=function(a)${body}` };
+        }
+      }
     }
     offset = si + 1;
   }
-  throw new Error('Cannot find sig function (split/join pattern not found)');
+  throw new Error('Cannot find sig function (split/join pattern absent)');
 }
 
 function extractHelperObject(src, sigBody) {
-  const helperMatch = sigBody.match(/;([a-zA-Z$_][\w$]{0,3})\.[a-zA-Z$_]/);
-  if (!helperMatch) throw new Error('Cannot find helper object name in sig body');
-  const name = helperMatch[1];
+  // e.g.  ;Abc.de(a,12);  → helper name is Abc
+  const hm = sigBody.match(/;([a-zA-Z$_][\w$]{0,4})\.[a-zA-Z$_][\w$]*\(a/);
+  if (!hm) throw new Error('Cannot find helper object name in sig body:\n' + sigBody.slice(0, 200));
+  const name = hm[1];
 
-  // Find:  var NAME={   or   NAME={
-  const patterns = [
+  for (const pat of [
     new RegExp(`var\\s+${name}\\s*=\\s*\\{`),
-    new RegExp(`[;,]${name}\\s*=\\s*\\{`),
-  ];
-  for (const pat of patterns) {
+    new RegExp(`[;,{(]${name}\\s*=\\s*\\{`),
+  ]) {
     const idx = src.search(pat);
     if (idx === -1) continue;
     const bodyStart = src.indexOf('{', idx);
@@ -104,77 +116,111 @@ function extractHelperObject(src, sigBody) {
 }
 
 function extractNFunction(src) {
-  // n-param throttle function: b=function(a){... return a.join("") or similar
-  const m = src.match(/([a-zA-Z$_][\w$]{0,3})=function\([a-zA-Z$_]+\)\{[^}]*\.join\(""\)[^}]*\}/);
-  if (!m) return null;
-  const name = m[1];
-  const idx = src.indexOf(m[0]);
-  const bodyStart = src.indexOf('{', idx);
-  const body = extractBody(src, bodyStart);
-  return { name, decl: `var ${name}=function(a)${body}` };
-}
-
-// ── resolver ──────────────────────────────────────────────────────────────────
-async function resolveUrl(streamUrl, playerUrl, encryptedSig, sigKey, nParam) {
-  const script = await getScript(playerUrl);
-
-  // Decrypt signature
-  const sigFn   = extractSigFunction(script);
-  const helperObj = extractHelperObject(script, sigFn.body);
-  const sigCode = `${helperObj.decl};\n${sigFn.decl};\n${sigFn.name}(sig)`;
-  const sigCtx  = { sig: encryptedSig };
-  const decSig  = vm.runInNewContext(sigCode, sigCtx, { timeout: 5000 });
-
-  // Build resolved URL
-  const u = new URL(streamUrl);
-  u.searchParams.set(sigKey || 'sig', decSig);
-
-  // Decrypt n-param (throttle bypass) if present
-  const nValue = nParam || u.searchParams.get('n');
-  if (nValue) {
-    try {
-      const nFn = extractNFunction(script);
-      if (nFn) {
-        const nCtx  = { n: nValue };
-        const decN  = vm.runInNewContext(`${nFn.decl};\n${nFn.name}(n)`, nCtx, { timeout: 5000 });
-        u.searchParams.set('n', decN);
-      }
-    } catch {
-      // n-param failure is non-fatal; stream may just be throttled
+  // n-param throttle function — looks for: NAME=function(a){...enhanced array ops...return a.join("")}
+  // Try several patterns
+  const patterns = [
+    /([a-zA-Z$_][\w$]{0,4})=function\(a\)\{var b=a\.split\(""\)/,
+    /([a-zA-Z$_][\w$]{0,4})=function\(a\)\{a=a\.split\(""\)/,
+  ];
+  for (const pat of patterns) {
+    const m = src.match(pat);
+    if (!m) continue;
+    const name = m[1];
+    const idx  = src.indexOf(m[0]);
+    const bodyStart = src.indexOf('{', idx);
+    const body = extractBody(src, bodyStart);
+    if (body.includes('.join("")') && body.length > 200) {
+      return { name, decl: `var ${name}=function(a)${body}` };
     }
   }
+  return null;
+}
 
-  return u.toString();
+// ── Core decrypt ──────────────────────────────────────────────────────────────
+async function decryptSignature(playerUrl, encSig) {
+  const script = await getScript(playerUrl);
+  const sigFn  = extractSigFunction(script);
+  const helper = extractHelperObject(script, sigFn.body);
+  const code   = `${helper.decl};\n${sigFn.decl};\n${sigFn.name}(sig)`;
+  const ctx    = { sig: encSig };
+  return vm.runInNewContext(code, ctx, { timeout: 5000 });
+}
+
+async function decryptN(playerUrl, nVal) {
+  const script = await getScript(playerUrl);
+  const nFn    = extractNFunction(script);
+  if (!nFn) return nVal; // can't decrypt → return as-is (stream just throttled)
+  const ctx  = { n: nVal };
+  return vm.runInNewContext(`${nFn.decl};\n${nFn.name}(n)`, ctx, { timeout: 5000 });
 }
 
 // ── HTTP server ───────────────────────────────────────────────────────────────
+function readBody(req) {
+  return new Promise(res => { let s = ''; req.on('data', c => s += c); req.on('end', () => res(s)); });
+}
+
 module.exports = function startCipherServer() {
-  const server = http.createServer((req, res) => {
-    if (req.method !== 'POST' || !req.url.startsWith('/resolve_url')) {
-      res.writeHead(404); res.end('not found'); return;
+  const server = http.createServer(async (req, res) => {
+    if (req.method !== 'POST') { res.writeHead(405); res.end('Method Not Allowed'); return; }
+
+    const body = await readBody(req);
+    let parsed;
+    try { parsed = JSON.parse(body); } catch {
+      res.writeHead(400); res.end(JSON.stringify({ error: 'Invalid JSON' })); return;
     }
-    let raw = '';
-    req.on('data', c => raw += c);
-    req.on('end', async () => {
-      try {
-        const body = JSON.parse(raw);
-        const { stream_url, player_url, encrypted_signature, signature_key, n_param } = body;
-        if (!player_url || !encrypted_signature) {
-          res.writeHead(400); res.end(JSON.stringify({ error: 'missing fields' })); return;
+
+    const send = (status, obj) => {
+      res.writeHead(status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(obj));
+    };
+
+    try {
+      // ── POST /get_sts ──────────────────────────────────────────────────────
+      if (req.url.startsWith('/get_sts')) {
+        const { player_url } = parsed;
+        if (!player_url) { send(400, { error: 'missing player_url' }); return; }
+        const script = await getScript(player_url);
+        const sts    = extractSts(script);
+        send(200, { sts });
+
+      // ── POST /decrypt_signature ────────────────────────────────────────────
+      } else if (req.url.startsWith('/decrypt_signature')) {
+        const { player_url, encrypted_signature, n_param } = parsed;
+        if (!player_url || !encrypted_signature) { send(400, { error: 'missing fields' }); return; }
+        const decSig = await decryptSignature(player_url, encrypted_signature);
+        const decN   = n_param ? await decryptN(player_url, n_param) : null;
+        send(200, { decrypted_signature: decSig, decrypted_n_sig: decN });
+
+      // ── POST /resolve_url ──────────────────────────────────────────────────
+      } else if (req.url.startsWith('/resolve_url')) {
+        const { stream_url, player_url, encrypted_signature, signature_key, n_param } = parsed;
+        if (!player_url || !encrypted_signature) { send(400, { error: 'missing fields' }); return; }
+
+        const decSig = await decryptSignature(player_url, encrypted_signature);
+        const u      = new URL(stream_url);
+        u.searchParams.set(signature_key || 'sig', decSig);
+
+        const nVal = n_param || u.searchParams.get('n');
+        if (nVal) {
+          try {
+            const decN = await decryptN(player_url, nVal);
+            u.searchParams.set('n', decN);
+          } catch { /* non-fatal */ }
         }
-        const resolved = await resolveUrl(stream_url, player_url, encrypted_signature, signature_key, n_param);
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ resolved_url: resolved }));
-      } catch (e) {
-        console.error('[cipher-server] Error:', e.message);
-        res.writeHead(500);
-        res.end(JSON.stringify({ error: e.message }));
+
+        send(200, { resolved_url: u.toString() });
+
+      } else {
+        send(404, { error: 'unknown endpoint' });
       }
-    });
+    } catch (e) {
+      console.error(`[cipher-server] ${req.url} error:`, e.message);
+      send(500, { error: e.message });
+    }
   });
 
   server.listen(PORT, '127.0.0.1', () =>
-    console.log(`[cipher-server] Running on port ${PORT}`)
+    console.log(`[cipher-server] Running on port ${PORT} (get_sts + decrypt_signature + resolve_url)`)
   );
   server.on('error', e => console.error('[cipher-server]', e.message));
   return server;
