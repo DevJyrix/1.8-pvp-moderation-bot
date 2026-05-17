@@ -30,8 +30,8 @@ const APP_TYPES = {
     id:        'discord_staff',
     label:     'Discord Staff',
     color:     0x5865F2,
-    roleKey:   'DEDICATED_MEMBER_ROLE_ID',
-    roleLabel: 'Dedicated Member',
+    roleKey:   'ACTIVE_MEMBER_ROLE_ID',
+    roleLabel: 'Active Member',
     questions: [
       { id: 'age',    label: 'How old are you?',                                         style: TextInputStyle.Short,     max: 20  },
       { id: 'time',   label: 'How long have you been in this server?',                   style: TextInputStyle.Short,     max: 100 },
@@ -44,8 +44,8 @@ const APP_TYPES = {
     id:        'game_staff',
     label:     'Game Staff',
     color:     0xED4245,
-    roleKey:   'DEDICATED_MEMBER_ROLE_ID',
-    roleLabel: 'Dedicated Member',
+    roleKey:   'ACTIVE_MEMBER_ROLE_ID',
+    roleLabel: 'Active Member',
     questions: [
       { id: 'age',   label: 'How old are you?',                                          style: TextInputStyle.Short,     max: 20  },
       { id: 'rank',  label: 'How long played & what is your current rank?',              style: TextInputStyle.Short,     max: 100 },
@@ -68,8 +68,8 @@ function buildAppPanel() {
     .setDescription(
       '**Choose an application type below.**\n\n' +
       `🎮 **Game Tester** — ${status('tester')} — Requires \`Active Member\` role\n` +
-      `💬 **Discord Staff** — ${status('discord_staff')} — Requires \`Dedicated Member\` role\n` +
-      `⚔️ **Game Staff** — ${status('game_staff')} — Requires \`Dedicated Member\` role`
+      `💬 **Discord Staff** — ${status('discord_staff')} — Requires \`Active Member\` role\n` +
+      `⚔️ **Game Staff** — ${status('game_staff')} — Requires \`Active Member\` role`
     )
     .setTimestamp();
 
@@ -132,7 +132,7 @@ async function showAppModal(interaction, appType) {
   const reqRoleId = config[def.roleKey];
   if (reqRoleId && !interaction.member.roles.cache.has(reqRoleId)) {
     return interaction.reply({
-      content: `You need the **${def.roleLabel}** role to apply for ${def.label}.`,
+      content: `You need the <@&${reqRoleId}> role to apply for **${def.label}**.`,
       flags: 64,
     });
   }
