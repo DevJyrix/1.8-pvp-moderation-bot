@@ -293,6 +293,50 @@ function extractSigFunction(src) {
       }
     }
 
+    // ── Pass 4c: literal .split()/.join() with string-table ARGUMENT ───────
+    // Method names are literal dot-notation, but the empty-string arg comes from
+    // the table: sig.split(v[27]) where v[27]=""  →  equivalent to sig.split("")
+    if (strTable.emptyIdx !== -1) {
+      const emptyBracketRe = new RegExp(`\\[([a-zA-Z$_][\\w$]*)\\[${strTable.emptyIdx}\\]\\]`, 'g');
+      const emptyAliases = new Set([tableVarName]);
+      let bm2;
+      while ((bm2 = emptyBracketRe.exec(src)) !== null) emptyAliases.add(bm2[1]);
+      console.log(`[cipher] Pass4c: empty-arg aliases: ${[...emptyAliases].join(', ')}`);
+
+      for (const ea of emptyAliases) {
+        const sp = `.split(${ea}[${strTable.emptyIdx}])`;
+        const jp = `.join(${ea}[${strTable.emptyIdx}])`;
+        let sc = 0, jc = 0;
+        { let i = 0; while ((i = src.indexOf(sp, i)) !== -1) { sc++; i++; } }
+        { let i = 0; while ((i = src.indexOf(jp, i)) !== -1) { jc++; i++; } }
+        console.log(`[cipher] Pass4c: "${sp}" ${sc}×, "${jp}" ${jc}×`);
+
+        let off4c = 0;
+        while (off4c < src.length) {
+          const si = src.indexOf(sp, off4c);
+          if (si === -1) break;
+          const region = src.slice(Math.max(0, si - 700), si + sp.length + 5);
+          const m = region.match(/([a-zA-Z$_][\w$]*)=function\([a-zA-Z$_]+\)\{/);
+          if (m) {
+            const name    = m[1];
+            const realIdx = src.lastIndexOf(name + '=function(', si);
+            if (realIdx !== -1) {
+              const param     = getFnParam(src, realIdx + name.length + 1);
+              const bodyStart = src.indexOf('{', realIdx);
+              let body;
+              try { body = extractBody(src, bodyStart); } catch { off4c = si + 1; continue; }
+              if (body.includes(jp)) {
+                console.log(`[cipher] sig fn "${name}" via Pass4c (${sp}), param="${param}", body ${body.length} chars`);
+                const aliasDecl = ea !== tableVarName ? `var ${ea}=${tableVarName}` : null;
+                return { name, body, decl: `var ${name}=function(${param})${body}`, strTable, tableAlias: ea, aliasDecl };
+              }
+            }
+          }
+          off4c = si + 1;
+        }
+      }
+    }
+
     // Dump context for every alias at the split position to diagnose further
     console.error(`[cipher] Pass4 FAILED. split aliases: ${[...splitAliases].join(', ')||'(none)'}, join aliases: ${[...joinAliases].join(', ')||'(none)'}, common: ${commonAliases.join(', ')||'(none)'}`);
     for (const alias of [...splitAliases].slice(0, 4)) {
@@ -309,8 +353,63 @@ function extractSigFunction(src) {
     }
   }
 
-  // ── Final diagnostic dump (literal .split("") failures) ────────────────────
+  // ── Pass 5: find by .join("") + cipher-typical array mutations ─────────────
+  // Cipher functions MUST rejoin the array at the end.  If the function that
+  // calls .join("") also does .reverse() or .splice(), it is almost certainly
+  // the cipher (utility array functions do NOT rejoin into a string).
+  {
+    const joinLitIdxs = [];
+    { let i = 0; while ((i = src.indexOf('.join("")', i)) !== -1) { joinLitIdxs.push(i); i++; } }
+    console.log(`[cipher] Pass5: ${joinLitIdxs.length}× literal .join("")`);
+
+    for (const ji of joinLitIdxs) {
+      const region = src.slice(Math.max(0, ji - 800), ji + 10);
+      const m = region.match(/([a-zA-Z$_][\w$]*)=function\([a-zA-Z$_]+\)\{/);
+      if (!m) continue;
+      const name    = m[1];
+      const realIdx = src.lastIndexOf(name + '=function(', ji);
+      if (realIdx === -1) continue;
+      const param     = getFnParam(src, realIdx + name.length + 1);
+      const bodyStart = src.indexOf('{', realIdx);
+      let body;
+      try { body = extractBody(src, bodyStart); } catch { continue; }
+      if (!body.includes('.join("")')) continue;
+      const hasReverse = body.includes('.reverse()');
+      const hasSplice  = body.includes('.splice(');
+      if (hasReverse || hasSplice) {
+        console.log(`[cipher] sig fn "${name}" via Pass5 (.join("")+ops), reverse=${hasReverse}, splice=${hasSplice}, body ${body.length} chars`);
+        return { name, body, decl: `var ${name}=function(${param})${body}` };
+      }
+    }
+    console.log('[cipher] Pass5: no .join("")+ops function found');
+  }
+
+  // ── Final diagnostic dump ────────────────────────────────────────────────────
   console.error(`[cipher] ALL PASSES FAILED. Script ${src.length} chars, ${allSplitIdxs.length}× literal .split("")`);
+
+  // Count patterns we haven't tried so future logs can guide the next fix
+  const diagCounts = {};
+  { let c = 0, i = 0; while ((i = src.indexOf('.join("")',  i)) !== -1) { c++; i++; } diagCounts['.join("")']  = c; }
+  { let c = 0, i = 0; while ((i = src.indexOf('.reverse()', i)) !== -1) { c++; i++; } diagCounts['.reverse()'] = c; }
+  { let c = 0, i = 0; while ((i = src.indexOf('.splice(',   i)) !== -1) { c++; i++; } diagCounts['.splice(']   = c; }
+  { let c = 0, i = 0; while ((i = src.indexOf('[...',       i)) !== -1) { c++; i++; } diagCounts['[...spread'] = c; }
+  if (strTable) {
+    const { varName: tn, emptyIdx, reverseIdx, spliceIdx } = strTable;
+    if (emptyIdx  !== -1) {
+      let c = 0, i = 0; while ((i = src.indexOf(`.split(${tn}[${emptyIdx}])`, i)) !== -1) { c++; i++; }
+      diagCounts[`.split(${tn}[${emptyIdx}])`] = c;
+      c = 0; i = 0; while ((i = src.indexOf(`.join(${tn}[${emptyIdx}])`, i)) !== -1)  { c++; i++; }
+      diagCounts[`.join(${tn}[${emptyIdx}])`]  = c;
+    }
+    if (reverseIdx !== -1) {
+      diagCounts[`[X[${reverseIdx}]] (rev)`]  = (src.match(new RegExp(`\\[[a-zA-Z$_][\\w$]*\\[${reverseIdx}\\]\\]`, 'g')) || []).length;
+    }
+    if (spliceIdx  !== -1) {
+      diagCounts[`[X[${spliceIdx}]] (spl)`]   = (src.match(new RegExp(`\\[[a-zA-Z$_][\\w$]*\\[${spliceIdx}\\]\\]`, 'g')) || []).length;
+    }
+  }
+  console.error('[cipher] pattern counts for next fix:', JSON.stringify(diagCounts));
+
   for (let k = 0; k < Math.min(6, allSplitIdxs.length); k++) {
     const p   = allSplitIdxs[k];
     const ctx = src.slice(Math.max(0, p - 350), p + 80).replace(/\n/g, '↵');
