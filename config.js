@@ -72,6 +72,7 @@ module.exports = {
   APP_CHANNEL_ID:             '1500623487738450010',
   APP_LOG_CHANNEL_ID:         '1500623669825896578',
   ACTIVE_MEMBER_ROLE_ID:      process.env.ACTIVE_MEMBER_ROLE_ID  || '1500191607683809372',
+  BOOSTER_ROLE_ID:            process.env.BOOSTER_ROLE_ID        || '1499768523470147647',
   DEDICATED_MEMBER_ROLE_ID:   process.env.DEDICATED_MEMBER_ROLE_ID || null,
   // Staff duty role — pinged on new tickets
   STAFF_DUTY_ROLE_ID:         process.env.STAFF_DUTY_ROLE_ID || null,

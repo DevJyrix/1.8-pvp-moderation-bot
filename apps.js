@@ -32,6 +32,7 @@ const APP_TYPES = {
     color:     0x5865F2,
     roleKey:   'ACTIVE_MEMBER_ROLE_ID',
     roleLabel: 'Active Member',
+    altRoleKey: 'BOOSTER_ROLE_ID',
     questions: [
       { id: 'age',    label: 'How old are you?',                                         style: TextInputStyle.Short,     max: 20  },
       { id: 'time',   label: 'How long have you been in this server?',                   style: TextInputStyle.Short,     max: 100 },
@@ -46,6 +47,7 @@ const APP_TYPES = {
     color:     0xED4245,
     roleKey:   'ACTIVE_MEMBER_ROLE_ID',
     roleLabel: 'Active Member',
+    altRoleKey: 'BOOSTER_ROLE_ID',
     questions: [
       { id: 'age',   label: 'How old are you?',                                          style: TextInputStyle.Short,     max: 20  },
       { id: 'rank',  label: 'How long played & what is your current rank?',              style: TextInputStyle.Short,     max: 100 },
@@ -130,9 +132,16 @@ async function showAppModal(interaction, appType) {
   }
 
   const reqRoleId = config[def.roleKey];
-  if (reqRoleId && !interaction.member.roles.cache.has(reqRoleId)) {
+  const altRoleId = def.altRoleKey ? config[def.altRoleKey] : null;
+  const hasRole   = !reqRoleId
+    || interaction.member.roles.cache.has(reqRoleId)
+    || (altRoleId && interaction.member.roles.cache.has(altRoleId));
+  if (!hasRole) {
+    const roleList = altRoleId
+      ? `<@&${reqRoleId}> or <@&${altRoleId}>`
+      : `<@&${reqRoleId}>`;
     return interaction.reply({
-      content: `You need the <@&${reqRoleId}> role to apply for **${def.label}**.`,
+      content: `You need the ${roleList} role to apply for **${def.label}**.`,
       flags: 64,
     });
   }
