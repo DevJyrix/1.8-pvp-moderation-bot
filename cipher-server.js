@@ -211,80 +211,101 @@ function extractSigFunction(src) {
 
   // ── Pass 4: string-table obfuscated cipher functions ─────────────────────────
   // Newer YouTube players replace "split"/"join"/"splice"/"reverse" with indexed
-  // lookups into a string array:
-  //   var a="foo{split{join{...".split("{")  →  a[21]="split", a[32]="join"
-  // The cipher function then looks like:
-  //   NAME=function(sig){sig=sig[a[21]](a[11]);Helper[a[45]](sig,N);return sig[a[32]](a[11])}
-  // We extract this table and search for functions using [a[splitIdx]] + [a[joinIdx]].
+  // lookups into a string array, e.g.:
+  //   var v="foo{split{join{...".split("{")  →  v[30]="split", v[41]="join"
+  //
+  // IMPORTANT: the cipher function is often wrapped in a closure that receives
+  // the table as a parameter under a DIFFERENT name:
+  //   (function(w, ...){ var CIPHER=function(sig){sig[w[30]](w[27]);...} })(v, ...)
+  // So we must search for [ANY_VAR[splitIdx]] across the whole script, not just
+  // [v[splitIdx]], then use whichever alias appears in both split + join positions.
   const strTable = extractStringTable(src);
   if (strTable) {
-    const { varName: tn, splitIdx, joinIdx } = strTable;
-    const splitPat = `[${tn}[${splitIdx}]]`;
-    const joinPat  = `[${tn}[${joinIdx}]]`;
+    const { varName: tableVarName, splitIdx, joinIdx } = strTable;
 
-    let splitCnt = 0, joinCnt = 0;
-    { let i = 0; while ((i = src.indexOf(splitPat, i)) !== -1) { splitCnt++; i++; } }
-    { let i = 0; while ((i = src.indexOf(joinPat,  i)) !== -1) { joinCnt++;  i++; } }
-    console.log(`[cipher] Pass4 string-table: splitPat="${splitPat}" (${splitCnt}×), joinPat="${joinPat}" (${joinCnt}×)`);
+    // Collect every variable name used in [VAR[splitIdx]] and [VAR[joinIdx]] patterns
+    const splitBracketRe = new RegExp(`\\[([a-zA-Z$_][\\w$]*)\\[${splitIdx}\\]\\]`, 'g');
+    const joinBracketRe  = new RegExp(`\\[([a-zA-Z$_][\\w$]*)\\[${joinIdx}\\]\\]`, 'g');
+    const splitAliases = new Set(), joinAliases = new Set();
+    let bm;
+    while ((bm = splitBracketRe.exec(src)) !== null) splitAliases.add(bm[1]);
+    while ((bm = joinBracketRe.exec(src))  !== null) joinAliases.add(bm[1]);
 
-    // Sub-pass 4a: assignment-expression form  NAME=function(param){...}
-    let offset = 0;
-    while (offset < src.length) {
-      const si = src.indexOf(splitPat, offset);
-      if (si === -1) break;
+    console.log(`[cipher] Pass4: vars with [X[${splitIdx}]]: ${[...splitAliases].join(', ') || '(none)'}`);
+    console.log(`[cipher] Pass4: vars with [X[${joinIdx}]]: ${[...joinAliases].join(', ')  || '(none)'}`);
 
-      const region = src.slice(Math.max(0, si - 700), si + splitPat.length + 5);
-      const m = region.match(/([a-zA-Z$_][\w$]*)=function\([a-zA-Z$_]+\)\{/);
-      if (m) {
-        const name    = m[1];
-        const realIdx = src.lastIndexOf(name + '=function(', si);
-        if (realIdx !== -1) {
-          const param     = getFnParam(src, realIdx + name.length + 1);
-          const bodyStart = src.indexOf('{', realIdx);
-          let body;
-          try { body = extractBody(src, bodyStart); } catch { offset = si + 1; continue; }
-          if (body.includes(joinPat)) {
-            console.log(`[cipher] sig fn "${name}" via Pass4a string-table (${splitPat}), param="${param}", body ${body.length} chars`);
-            return { name, body, decl: `var ${name}=function(${param})${body}`, strTable };
+    // Only consider variables that appear in BOTH split and join index positions
+    const commonAliases = [...splitAliases].filter(a => joinAliases.has(a));
+    console.log(`[cipher] Pass4: common aliases (split+join): ${commonAliases.join(', ') || '(none)'}`);
+
+    for (const alias of commonAliases) {
+      const splitPat = `[${alias}[${splitIdx}]]`;
+      const joinPat  = `[${alias}[${joinIdx}]]`;
+
+      // Sub-pass 4a: assignment-expression form  NAME=function(param){...}
+      let offset = 0;
+      while (offset < src.length) {
+        const si = src.indexOf(splitPat, offset);
+        if (si === -1) break;
+        const region = src.slice(Math.max(0, si - 700), si + splitPat.length + 5);
+        const m = region.match(/([a-zA-Z$_][\w$]*)=function\([a-zA-Z$_]+\)\{/);
+        if (m) {
+          const name    = m[1];
+          const realIdx = src.lastIndexOf(name + '=function(', si);
+          if (realIdx !== -1) {
+            const param     = getFnParam(src, realIdx + name.length + 1);
+            const bodyStart = src.indexOf('{', realIdx);
+            let body;
+            try { body = extractBody(src, bodyStart); } catch { offset = si + 1; continue; }
+            if (body.includes(joinPat)) {
+              console.log(`[cipher] sig fn "${name}" via Pass4a alias "${alias}" (${splitPat}), param="${param}", body ${body.length} chars`);
+              // If cipher uses an alias (w) rather than the global table (v), record a bridge decl: var w=v
+              const aliasDecl = alias !== tableVarName ? `var ${alias}=${tableVarName}` : null;
+              return { name, body, decl: `var ${name}=function(${param})${body}`, strTable, tableAlias: alias, aliasDecl };
+            }
           }
         }
+        offset = si + 1;
       }
-      offset = si + 1;
-    }
 
-    // Sub-pass 4b: standalone declaration  function NAME(param){...}
-    let offset2 = 0;
-    while (offset2 < src.length) {
-      const si = src.indexOf(splitPat, offset2);
-      if (si === -1) break;
-      const region = src.slice(Math.max(0, si - 600), si);
-      const m = region.match(/function\s+([a-zA-Z$_][\w$]*)\s*\(([a-zA-Z$_]+)\)\s*\{/);
-      if (m) {
-        const [, name, param] = m;
-        const realIdx = src.lastIndexOf('function ' + name, si);
-        if (realIdx !== -1) {
-          const bodyStart = src.indexOf('{', realIdx);
-          let body;
-          try { body = extractBody(src, bodyStart); } catch { offset2 = si + 1; continue; }
-          if (body.includes(joinPat)) {
-            console.log(`[cipher] sig fn "${name}" via Pass4b string-table standalone, param="${param}", body ${body.length} chars`);
-            return { name, body, decl: `var ${name}=function(${param})${body}`, strTable };
+      // Sub-pass 4b: standalone declaration  function NAME(param){...}
+      let offset2 = 0;
+      while (offset2 < src.length) {
+        const si = src.indexOf(splitPat, offset2);
+        if (si === -1) break;
+        const region = src.slice(Math.max(0, si - 600), si);
+        const m = region.match(/function\s+([a-zA-Z$_][\w$]*)\s*\(([a-zA-Z$_]+)\)\s*\{/);
+        if (m) {
+          const [, name, param] = m;
+          const realIdx = src.lastIndexOf('function ' + name, si);
+          if (realIdx !== -1) {
+            const bodyStart = src.indexOf('{', realIdx);
+            let body;
+            try { body = extractBody(src, bodyStart); } catch { offset2 = si + 1; continue; }
+            if (body.includes(joinPat)) {
+              console.log(`[cipher] sig fn "${name}" via Pass4b alias "${alias}" standalone, param="${param}", body ${body.length} chars`);
+              const aliasDecl = alias !== tableVarName ? `var ${alias}=${tableVarName}` : null;
+              return { name, body, decl: `var ${name}=function(${param})${body}`, strTable, tableAlias: alias, aliasDecl };
+            }
           }
         }
+        offset2 = si + 1;
       }
-      offset2 = si + 1;
     }
 
-    // Dump context around splitPat occurrences to diagnose why no fn was found
-    console.error(`[cipher] Pass4 FAILED: no sig fn found with string-table patterns. Contexts:`);
-    let dumpOff = 0, dumpN = 0;
-    while (dumpN < 6 && dumpOff < src.length) {
-      const si = src.indexOf(splitPat, dumpOff);
-      if (si === -1) break;
-      const ctx = src.slice(Math.max(0, si - 350), si + splitPat.length + 100).replace(/\n/g, '↵');
-      console.error(`[cipher]   P4split[${dumpN}] @${si}: …${ctx}…`);
-      dumpN++;
-      dumpOff = si + 1;
+    // Dump context for every alias at the split position to diagnose further
+    console.error(`[cipher] Pass4 FAILED. split aliases: ${[...splitAliases].join(', ')||'(none)'}, join aliases: ${[...joinAliases].join(', ')||'(none)'}, common: ${commonAliases.join(', ')||'(none)'}`);
+    for (const alias of [...splitAliases].slice(0, 4)) {
+      const pat = `[${alias}[${splitIdx}]]`;
+      let dumpOff = 0, dumpN = 0;
+      while (dumpN < 3 && dumpOff < src.length) {
+        const si = src.indexOf(pat, dumpOff);
+        if (si === -1) break;
+        const ctx = src.slice(Math.max(0, si - 300), si + pat.length + 100).replace(/\n/g, '↵');
+        console.error(`[cipher]   ${pat}[${dumpN}] @${si}: …${ctx}…`);
+        dumpN++;
+        dumpOff = si + 1;
+      }
     }
   }
 
@@ -416,13 +437,16 @@ async function decryptSignature(playerUrl, encSig) {
   }
 
   // Build VM preamble:
-  //   [optional string table]  →  helper object  →  cipher function  →  call
-  // If the cipher fn uses string-table indices (a[21] etc.) we MUST include
-  // the table declaration so those references resolve inside the VM.
+  //   [string table]  →  [alias bridge if needed]  →  helper  →  cipher fn  →  call
+  // The cipher fn and helper may use a closure-local alias (e.g. w) that points
+  // to the same array as the global table (v).  We declare both so all [w[N]]
+  // and [v[N]] lookups inside the VM resolve correctly.
   const parts = [];
   if (sigFn.strTable) {
-    parts.push(sigFn.strTable.decl);
-    console.log(`[cipher] VM: injecting string table "${sigFn.strTable.varName}" (${sigFn.strTable.strings.length} entries)`);
+    parts.push(sigFn.strTable.decl);                  // var v=[...]
+    if (sigFn.aliasDecl) parts.push(sigFn.aliasDecl); // var w=v
+    console.log(`[cipher] VM: string table "${sigFn.strTable.varName}" (${sigFn.strTable.strings.length} entries)` +
+      (sigFn.aliasDecl ? `, alias "${sigFn.tableAlias}"` : ''));
   }
   parts.push(helper.decl);
   parts.push(sigFn.decl);
