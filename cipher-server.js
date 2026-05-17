@@ -463,6 +463,86 @@ function extractSigFunction(src) {
     }
   }
 
+  // ── Pass 7: XOR-dispatch cipher (var K=q^B; dispatch pattern) ────────────────
+  // YouTube player 2d01abf7+: cipher is a multi-branch XOR-obfuscated dispatch.
+  // All string-table indices are XOR'd: v[K^3630]="split", v[K^3609]="join", etc.
+  // Detection: find 'var K=q^B;' dispatch fn + helper obj with v[revIdx]/v[splIdx]
+  // methods + find the sig cipher (B|48)==B call constants from the call site.
+  {
+    const dispatchRe = /(\w+)\s*=\s*function\s*\([^)]+\)\s*\{var K=q\^B;/;
+    const dm = dispatchRe.exec(src);
+    if (dm) {
+      const dispName   = dm[1];
+      const paramMatch = dm[0].match(/function\s*\(([^)]+)\)/);
+      const params     = paramMatch ? paramMatch[1] : 'B,q,A,z,U,E,T,l,J';
+      const bodyStart  = src.indexOf('{', dm.index);
+      let dispBody = null;
+      try { dispBody = extractBody(src, bodyStart); }
+      catch (e) { console.error(`[cipher] Pass7: cannot extract dispatch body: ${e.message}`); }
+
+      if (dispBody) {
+        // Find helper object: var X={...} whose body contains v[revIdx]() AND v[splIdx](0,
+        let helperName = null, helperDecl = null;
+        if (strTable && strTable.reverseIdx !== -1 && strTable.spliceIdx !== -1) {
+          const revPat = `[v[${strTable.reverseIdx}]]()`;
+          const splPat = `[v[${strTable.spliceIdx}]](0,`;
+          const helperObjRe = /var\s+(\w+)\s*=\s*\{/g;
+          let hm;
+          while ((hm = helperObjRe.exec(src)) !== null) {
+            const hBodyStart = src.indexOf('{', hm.index);
+            let hBody;
+            try { hBody = extractBody(src, hBodyStart); } catch { continue; }
+            if (hBody.includes(revPat) && hBody.includes(splPat)) {
+              helperName = hm[1];
+              helperDecl = `var ${helperName}=${hBody}`;
+              console.log(`[cipher] Pass7: helper "${helperName}" body ${hBody.length} chars`);
+              break;
+            }
+          }
+        }
+        // Find B,q for sig cipher: DISPATCH(N,M,...) where (N|48)===N
+        // Prefer the call closest to a T.s / signatureCipher context
+        let sigB = null, sigQ = null;
+        const callRe7 = new RegExp(`${dispName}\\s*\\(\\s*(\\d+)\\s*,\\s*(\\d+)`, 'g');
+        let cm;
+        while ((cm = callRe7.exec(src)) !== null) {
+          const B = parseInt(cm[1]), Q = parseInt(cm[2]);
+          if ((B | 48) === B) {
+            const ctx = src.slice(Math.max(0, cm.index - 350), cm.index + 200);
+            if (ctx.includes('T.s') || ctx.includes('signatureCipher')) {
+              sigB = B; sigQ = Q;
+              console.log(`[cipher] Pass7: sig call near T.s: ${dispName}(${B},${Q},...)`);
+              break;
+            }
+          }
+        }
+        if (sigB === null) {
+          callRe7.lastIndex = 0;
+          while ((cm = callRe7.exec(src)) !== null) {
+            const B = parseInt(cm[1]);
+            if ((B | 48) === B) { sigB = B; sigQ = parseInt(cm[2]); break; }
+          }
+          if (sigB !== null)
+            console.log(`[cipher] Pass7: sig call by bit pattern: ${dispName}(${sigB},${sigQ},...)`);
+        }
+        if (sigB !== null && helperName !== null) {
+          console.log(`[cipher] Pass7 SUCCESS: dispatch="${dispName}" helper="${helperName}" sig=(${sigB},${sigQ})`);
+          return {
+            name: dispName, body: dispBody,
+            decl: `var ${dispName}=function(${params})${dispBody}`,
+            isXorDispatch: true, sigB, sigQ, helperName, helperDecl, strTable,
+          };
+        }
+        if (sigB === null)
+          console.error(`[cipher] Pass7: no (B|48)==B sig call found for dispatch "${dispName}"`);
+        if (helperName === null)
+          console.error(`[cipher] Pass7: no helper with v[${strTable?.reverseIdx}]()/v[${strTable?.spliceIdx}](0,)`);
+      }
+    } else {
+      console.log('[cipher] Pass7: no K=q^B dispatch function in script');
+    }
+  }
+
   // ── Final diagnostic dump ────────────────────────────────────────────────────
   console.error(`[cipher] ALL PASSES FAILED. Script ${src.length} chars, ${allSplitIdxs.length}× literal .split("")`);
 
@@ -605,30 +685,33 @@ async function decryptSignature(playerUrl, encSig) {
     return encSig;
   }
 
-  let helper;
-  try {
-    helper = extractHelperObject(script, sigFn.body, sigFn.strTable);
-  } catch (e) {
-    console.warn(`[cipher] helper extraction failed: ${e.message}`);
-    console.warn('[cipher] NO-OP FALLBACK: returning encrypted_signature unchanged');
-    return encSig;
-  }
-
-  // Build VM preamble:
-  //   [string table]  →  [alias bridge if needed]  →  helper  →  cipher fn  →  call
-  // The cipher fn and helper may use a closure-local alias (e.g. w) that points
-  // to the same array as the global table (v).  We declare both so all [w[N]]
-  // and [v[N]] lookups inside the VM resolve correctly.
   const parts = [];
-  if (sigFn.strTable) {
-    parts.push(sigFn.strTable.decl);                  // var v=[...]
-    if (sigFn.aliasDecl) parts.push(sigFn.aliasDecl); // var w=v
-    console.log(`[cipher] VM: string table "${sigFn.strTable.varName}" (${sigFn.strTable.strings.length} entries)` +
-      (sigFn.aliasDecl ? `, alias "${sigFn.tableAlias}"` : ''));
+  if (sigFn.isXorDispatch) {
+    // XOR-dispatch cipher: helper already bundled in sigFn, call with fixed B,q
+    if (sigFn.strTable) parts.push(sigFn.strTable.decl);
+    parts.push(sigFn.helperDecl);
+    parts.push(sigFn.decl);
+    parts.push(`${sigFn.name}(${sigFn.sigB},${sigFn.sigQ},sig)`);
+    console.log(`[cipher] VM: XOR-dispatch ${sigFn.name}(${sigFn.sigB},${sigFn.sigQ},sig) helper="${sigFn.helperName}"`);
+  } else {
+    let helper;
+    try {
+      helper = extractHelperObject(script, sigFn.body, sigFn.strTable);
+    } catch (e) {
+      console.warn(`[cipher] helper extraction failed: ${e.message}`);
+      console.warn('[cipher] NO-OP FALLBACK: returning encrypted_signature unchanged');
+      return encSig;
+    }
+    if (sigFn.strTable) {
+      parts.push(sigFn.strTable.decl);
+      if (sigFn.aliasDecl) parts.push(sigFn.aliasDecl);
+      console.log(`[cipher] VM: string table "${sigFn.strTable.varName}" (${sigFn.strTable.strings.length} entries)` +
+        (sigFn.aliasDecl ? `, alias "${sigFn.tableAlias}"` : ''));
+    }
+    parts.push(helper.decl);
+    parts.push(sigFn.decl);
+    parts.push(`${sigFn.name}(sig)`);
   }
-  parts.push(helper.decl);
-  parts.push(sigFn.decl);
-  parts.push(`${sigFn.name}(sig)`);
 
   const code = parts.join(';\n');
   const ctx  = { sig: encSig };

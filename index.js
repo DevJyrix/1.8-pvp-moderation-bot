@@ -26,8 +26,9 @@ const {
 } = tickets;
 const { addInfraction, removeInfraction, clearWarnsAndNotes, buildFullInfractionEmbed } = require('./infractions');
 const { recordAction, buildStatsEmbed: buildModStatsEmbed, buildModStatsRow } = require('./modstats');
-const music = require('./music');
-const apps  = require('./apps');
+const music       = require('./music');
+const apps        = require('./apps');
+const memberstats = require('./memberstats');
 
 // ─── Client ────────────────────────────────────────────────────────────────────
 const client = new Client({
@@ -179,6 +180,9 @@ const slashDefs = [
     .setDescription('Give a user the Trial Staff role and DM them an onboarding guide (Admin only)')
     .setDefaultMemberPermissions(0)
     .addUserOption(o => o.setName('user').setDescription('User to promote to Trial Staff').setRequired(true)),
+  new SlashCommandBuilder()
+    .setName('serverstats')
+    .setDescription('Show Discord server member growth stats and milestone estimates'),
 ].map(c => c.toJSON());
 
 // ─── Ready ─────────────────────────────────────────────────────────────────────
@@ -1459,6 +1463,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
   }
 
+  // /serverstats
+  if (interaction.isChatInputCommand() && interaction.commandName === 'serverstats') {
+    await interaction.deferReply();
+    try {
+      const embed = memberstats.buildEmbed(interaction.guild);
+      return interaction.editReply({ embeds: [embed] });
+    } catch (e) {
+      return interaction.editReply({ content: `Error generating stats: ${e.message}` });
+    }
+  }
+
   // /close
   if (interaction.isChatInputCommand() && interaction.commandName === 'close') {
     return closeTicket(interaction, interaction.channel);
@@ -2331,6 +2346,14 @@ client.on(Events.ThreadCreate, async (thread, newlyCreated) => {
   } catch (e) {
     console.error('[suggestions] Auto-react failed:', e.message);
   }
+});
+
+// ─── Member join/leave tracking ───────────────────────────────────────────────
+client.on(Events.GuildMemberAdd, () => {
+  try { memberstats.recordEvent('join'); } catch {}
+});
+client.on(Events.GuildMemberRemove, () => {
+  try { memberstats.recordEvent('leave'); } catch {}
 });
 
 client.on('error', err => console.error('[Discord Client Error]', err));
