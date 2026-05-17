@@ -384,6 +384,85 @@ function extractSigFunction(src) {
     console.log('[cipher] Pass5: no .join("")+ops function found');
   }
 
+  // ── Pass 6: helper-first — find helper via [X[reverseIdx]], then cipher ─────
+  // Diagnostics show: ".reverse()":3 and "[X[reverseIdx]]":2 exist, but they are
+  // INSIDE the helper object's method bodies — not in the cipher function itself.
+  // The cipher calls the helper by NAME (dot notation), so it has .join("") but
+  // NOT .reverse()/.splice() directly.
+  // Strategy: find the helper object name via [X[reverseIdx]] context, then find
+  // any .join("") function that calls that helper.
+  {
+    const joinLitIdxs = [];
+    { let i = 0; while ((i = src.indexOf('.join("")', i)) !== -1) { joinLitIdxs.push(i); i++; } }
+
+    // Find all [X[reverseIdx]] occurrences to locate the helper object
+    const revRe = strTable
+      ? new RegExp(`\\[([a-zA-Z$_][\\w$]*)\\[${strTable.reverseIdx}\\]\\]`, 'g')
+      : null;
+    const revOccs = [];
+    if (revRe) { let rm; while ((rm = revRe.exec(src)) !== null) revOccs.push({ pos: rm.index, alias: rm[1] }); }
+    console.log(`[cipher] Pass6: [X[${strTable ? strTable.reverseIdx : '?'}]] at positions: ${revOccs.map(r => r.pos).join(', ') || '(none)'}`);
+
+    // For each reverse occurrence, look backward for the enclosing object assignment (var XY={)
+    const helperNames = new Set();
+    for (const { pos } of revOccs) {
+      const region = src.slice(Math.max(0, pos - 3000), pos);
+      const objMatches = [...region.matchAll(/(?:var\s+)?([a-zA-Z$_][\w$]*)\s*=\s*\{/g)];
+      if (objMatches.length > 0) {
+        helperNames.add(objMatches[objMatches.length - 1][1]);
+      }
+    }
+    console.log(`[cipher] Pass6: helper candidates: ${[...helperNames].join(', ') || '(none)'}`);
+
+    // Find .join("") functions that call one of these helpers
+    for (const helperName of helperNames) {
+      const dotCall     = `;${helperName}.`;
+      const bracketCall = `;${helperName}[`;
+      for (const ji of joinLitIdxs) {
+        const region = src.slice(Math.max(0, ji - 800), ji + 10);
+        const m = region.match(/([a-zA-Z$_][\w$]*)=function\([a-zA-Z$_]+\)\{/);
+        if (!m) continue;
+        const name    = m[1];
+        const realIdx = src.lastIndexOf(name + '=function(', ji);
+        if (realIdx === -1) continue;
+        const param     = getFnParam(src, realIdx + name.length + 1);
+        const bodyStart = src.indexOf('{', realIdx);
+        let body;
+        try { body = extractBody(src, bodyStart); } catch { continue; }
+        if (!body.includes('.join("")')) continue;
+        if (body.includes(dotCall) || body.includes(bracketCall)) {
+          console.log(`[cipher] sig fn "${name}" via Pass6 helper="${helperName}", param="${param}", body ${body.length} chars`);
+          console.log(`[cipher] Pass6 body: ${body.slice(0, 500).replace(/\n/g, '↵')}`);
+          return { name, body, decl: `var ${name}=function(${param})${body}` };
+        }
+      }
+    }
+
+    // Dump context around [X[reverseIdx]] occurrences + first few .join("") bodies
+    console.error(`[cipher] Pass6 FAILED. Dumping [X[${strTable ? strTable.reverseIdx : '?'}]] contexts:`);
+    for (const { pos } of revOccs.slice(0, 3)) {
+      const ctx = src.slice(Math.max(0, pos - 600), pos + 300).replace(/\n/g, '↵');
+      console.error(`[cipher]   rev@${pos}: …${ctx}…`);
+    }
+    console.error(`[cipher] Pass6: first 5 .join("") function bodies:`);
+    let dumpedBodies = 0;
+    for (const ji of joinLitIdxs) {
+      if (dumpedBodies >= 5) break;
+      const region = src.slice(Math.max(0, ji - 800), ji + 10);
+      const m = region.match(/([a-zA-Z$_][\w$]*)=function\([a-zA-Z$_]+\)\{/);
+      if (!m) continue;
+      const name    = m[1];
+      const realIdx = src.lastIndexOf(name + '=function(', ji);
+      if (realIdx === -1) continue;
+      const bodyStart = src.indexOf('{', realIdx);
+      let body;
+      try { body = extractBody(src, bodyStart); } catch { continue; }
+      if (!body.includes('.join("")')) continue;
+      console.error(`[cipher]   join[${dumpedBodies}] fn="${name}" body(${body.length}): ${body.slice(0, 300).replace(/\n/g, '↵')}`);
+      dumpedBodies++;
+    }
+  }
+
   // ── Final diagnostic dump ────────────────────────────────────────────────────
   console.error(`[cipher] ALL PASSES FAILED. Script ${src.length} chars, ${allSplitIdxs.length}× literal .split("")`);
 
